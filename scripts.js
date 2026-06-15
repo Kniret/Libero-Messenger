@@ -1,11 +1,19 @@
 // scripts.js
-import { auth, db } from './firebase.js';
+import { auth, db, storage } from './firebase.js';
 import { 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword, 
     onAuthStateChanged, 
-    signOut 
+    signOut,
+    updateEmail,
+    reauthenticateWithCredential,
+    EmailAuthProvider
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import {
+    ref,
+    uploadBytes,
+    getDownloadURL
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 import { 
     collection, 
     doc, 
@@ -28,7 +36,9 @@ let activeTab = 'login'; // 'login' | 'register'
 let unsubscribeMessages = null;
 let unsubscribeFriends = null;
 let unsubscribeRequests = null;
+let unsubscribeProfile = null;
 let userColorsCache = {};
+let friendsRequestMap = new Map();
 
 // Предопределенные цвета аватаров
 const avatarsBg = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#0ea5e9", "#6366f1", "#a855f7", "#ec4899"];
@@ -53,6 +63,42 @@ function getUserColor(uid) {
         userColorsCache[uid] = avatarsBg[index];
     }
     return userColorsCache[uid];
+}
+
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function applyAvatarToElement(el, profile) {
+    if (!el || !profile) return;
+    el.textContent = '';
+    el.style.background = '';
+    el.style.backgroundImage = '';
+    if (profile.avatarUrl) {
+        el.style.backgroundImage = `url(${profile.avatarUrl})`;
+        el.style.backgroundSize = 'cover';
+        el.style.backgroundPosition = 'center';
+        el.classList.add('has-image');
+    } else {
+        el.classList.remove('has-image');
+        el.textContent = (profile.username || '?').charAt(0).toUpperCase();
+        el.style.background = getUserColor(profile.uid || profile.username || '');
+    }
+}
+
+function formatProfileBio(bio) {
+    const text = (bio || '').trim();
+    return text || 'Описание не указано.';
+}
+
+async function fetchUserProfile(uid) {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (!snap.exists()) return null;
+    return snap.data();
 }
 
 /* === УВЕДОМЛЕНИЯ И ПОДТВЕРЖДЕНИЯ === */
@@ -112,7 +158,7 @@ function getAuthErrorMessage(error) {
         'auth/too-many-requests': 'Слишком много попыток. Попробуйте позже.',
         'auth/network-request-failed': 'Нет соединения с интернетом.',
         'auth/invalid-email': 'Некорректный логин.',
-        'auth/operation-not-allowed': 'Авторизация временно недоступна.',
+        'auth/requires-recent-login': 'Для смены email войдите заново и повторите.',
         'permission-denied': 'Нет доступа к базе данных. Опубликуй правила из firestore.rules в Firebase Console.',
         'failed-precondition': 'Нужен индекс Firestore. Обнови правила и перезагрузи страницу.',
     };
@@ -193,6 +239,8 @@ const setupUsernameBtn = document.getElementById('setupUsernameBtn');
 
 const logoutBtn = document.getElementById('logoutBtn');
 const myProfileName = document.getElementById('myProfileName');
+const myProfileAvatar = document.getElementById('myProfileAvatar');
+const myProfileBtn = document.getElementById('myProfileBtn');
 
 // Переключение табов
 tabLoginBtn.addEventListener('click', () => {
@@ -258,12 +306,14 @@ onAuthStateChanged(auth, async (firebaseUser) => {
             if (userSnap.exists()) {
                 currentUser = userSnap.data();
                 myProfileName.textContent = currentUser.username;
+                applyAvatarToElement(myProfileAvatar, currentUser);
                 
                 authContainer.classList.add('hidden');
                 appContainer.classList.add('active');
-                usernameCard.style.display = 'none'; // Скрываем карточку шага 2
+                usernameCard.style.display = 'none';
 
                 closeChat();
+                startListeningOwnProfile();
                 startListeningRequestsAndFriends();
             } else {
                 // Новый юзер: прячем вход, включаем шаг 2
@@ -333,19 +383,22 @@ setupUsernameBtn.addEventListener('click', async () => {
         await setDoc(doc(db, 'users', firebaseUser.uid), {
             uid: firebaseUser.uid,
             username: rawLogin,
+            bio: '',
             createdAt: Date.now()
         });
 
         await setDoc(userRef, { uid: firebaseUser.uid });
 
         // 3. Данные успешно записаны, обновляем UI
-        currentUser = { uid: firebaseUser.uid, username: rawLogin };
+        currentUser = { uid: firebaseUser.uid, username: rawLogin, bio: '' };
         myProfileName.textContent = currentUser.username;
+        applyAvatarToElement(myProfileAvatar, currentUser);
         
-        usernameCard.style.display = 'none'; // Скрываем карточку шага 2
+        usernameCard.style.display = 'none';
         authContainer.classList.add('hidden');
         appContainer.classList.add('active');
         
+        startListeningOwnProfile();
         startListeningRequestsAndFriends();
 
     } catch (error) {
@@ -369,6 +422,20 @@ function stopAllSubscriptions() {
     if (unsubscribeMessages) unsubscribeMessages();
     if (unsubscribeFriends) unsubscribeFriends();
     if (unsubscribeRequests) unsubscribeRequests();
+    if (unsubscribeProfile) unsubscribeProfile();
+}
+
+function startListeningOwnProfile() {
+    if (unsubscribeProfile) unsubscribeProfile();
+    unsubscribeProfile = onSnapshot(doc(db, 'users', currentUser.uid), (snap) => {
+        if (!snap.exists()) return;
+        currentUser = snap.data();
+        myProfileName.textContent = currentUser.username;
+        applyAvatarToElement(myProfileAvatar, currentUser);
+        if (profileModal.classList.contains('active') && profileModalMode === 'self') {
+            fillSelfProfileForm();
+        }
+    });
 }
 
 function stopFriendsListeners() {
@@ -438,7 +505,7 @@ async function renderFoundUser(user) {
     const div = document.createElement('div');
     div.className = 'found-user-item';
     div.innerHTML = `
-        <span>@${user.username}</span>
+        <span>${escapeHtml(user.username)}</span>
         <button class="friend-req-btn" id="btn-req-${user.uid}">Загрузка...</button>
     `;
     searchResults.appendChild(div);
@@ -525,7 +592,7 @@ function startListeningRequestsAndFriends() {
                 const div = document.createElement('div');
                 div.className = 'friend-req-item';
                 div.innerHTML = `
-                    <span>@${req.senderUsername}</span>
+                    <span>${escapeHtml(req.senderUsername)}</span>
                     <div class="req-actions">
                         <button class="req-btn accept" id="accept-${reqId}">Да</button>
                         <button class="req-btn reject" id="reject-${reqId}">Нет</button>
@@ -557,23 +624,27 @@ function startListeningRequestsAndFriends() {
         renderFriendsList(Array.from(friendsMap.values()));
     }
 
-    function applyFriendRequest(data) {
+    function applyFriendRequest(data, reqId) {
         if (data.senderUid === currentUser.uid) {
             friendsMap.set(data.receiverUid, { uid: data.receiverUid, username: data.receiverUsername });
+            friendsRequestMap.set(data.receiverUid, reqId);
         } else if (data.receiverUid === currentUser.uid) {
             friendsMap.set(data.senderUid, { uid: data.senderUid, username: data.senderUsername });
+            friendsRequestMap.set(data.senderUid, reqId);
         }
     }
 
     stopFriendsListeners();
+    friendsRequestMap.clear();
 
     const unsubFriendsSent = onSnapshot(friendsSentQuery, (snapshot) => {
         snapshot.docChanges().forEach((change) => {
             const data = change.doc.data();
             if (change.type === 'removed') {
                 friendsMap.delete(data.receiverUid);
+                friendsRequestMap.delete(data.receiverUid);
             } else {
-                applyFriendRequest(data);
+                applyFriendRequest(data, change.doc.id);
             }
         });
         syncFriendsList();
@@ -584,8 +655,9 @@ function startListeningRequestsAndFriends() {
             const data = change.doc.data();
             if (change.type === 'removed') {
                 friendsMap.delete(data.senderUid);
+                friendsRequestMap.delete(data.senderUid);
             } else {
-                applyFriendRequest(data);
+                applyFriendRequest(data, change.doc.id);
             }
         });
         syncFriendsList();
@@ -615,13 +687,14 @@ function renderFriendsList(friends) {
     friends.forEach(friend => {
         const color = getUserColor(friend.uid);
         const avatarStr = friend.username.charAt(0).toUpperCase();
+        const friendProfile = { uid: friend.uid, username: friend.username };
 
         const div = document.createElement('div');
         div.className = `chat-item ${currentChatFriend && currentChatFriend.uid === friend.uid ? 'active' : ''}`;
         div.onclick = () => selectFriendChat(friend);
         div.innerHTML = `
             <div class="avatar-container">
-                <div class="avatar" style="background:${color}">${avatarStr}</div>
+                <div class="avatar friend-list-avatar" data-uid="${friend.uid}" style="background:${color}">${avatarStr}</div>
                 <div class="online-dot active"></div>
             </div>
             <div class="chat-info">
@@ -635,8 +708,11 @@ function renderFriendsList(friends) {
             </div>
         `;
         chatList.appendChild(div);
-
-        // Получаем последнее сообщение для этого друга
+        fetchUserProfile(friend.uid).then((profile) => {
+            if (!profile) return;
+            const avatarEl = div.querySelector('.friend-list-avatar');
+            applyAvatarToElement(avatarEl, profile);
+        });
         listenLastMessage(friend.uid);
     });
 }
@@ -670,27 +746,30 @@ function closeChat() {
 }
 
 function selectFriendChat(friend) {
-    currentChatFriend = friend;
+    currentChatFriend = {
+        ...friend,
+        requestId: friendsRequestMap.get(friend.uid) || friend.requestId || null
+    };
 
-    // Скрываем заглушку и показываем чат
     noChatSelectedScreen.style.display = 'none';
     chatHeader.style.display = 'flex';
     messagesArea.style.display = 'flex';
     chatInputArea.style.display = 'flex';
 
-    // Заполняем шапку чата
-    activeName.textContent = `@${friend.username}`;
-    activeAvatar.textContent = friend.username.charAt(0).toUpperCase();
-    activeAvatar.style.background = getUserColor(friend.uid);
+    activeName.textContent = friend.username;
+    applyAvatarToElement(activeAvatar, friend);
     activeStatus.textContent = 'в сети';
 
-    // Обновляем активный класс в списке друзей
     document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
     
-    // Подписываемся на сообщения
     listenToMessages();
+    loadFriendInfoPanel(currentChatFriend);
+    fetchUserProfile(friend.uid).then((profile) => {
+        if (!profile || currentChatFriend?.uid !== friend.uid) return;
+        applyAvatarToElement(activeAvatar, profile);
+        currentChatFriend = { ...currentChatFriend, ...profile };
+    });
 
-    // Мобильный вид - скрываем сайдбар
     if (window.innerWidth <= 768) {
         document.getElementById('sidebar').classList.add('hidden-mobile');
     }
@@ -726,7 +805,8 @@ async function sendMessage() {
             senderUid: currentUser.uid,
             receiverUid: currentChatFriend.uid,
             text: text,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            read: false
         });
 
         messageInput.value = '';
@@ -739,10 +819,32 @@ async function sendMessage() {
     }
 }
 
+async function markMessagesAsRead(snapshot) {
+    const updates = [];
+    snapshot.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.receiverUid === currentUser.uid && !data.read) {
+            updates.push(updateDoc(docSnap.ref, { read: true, readAt: Date.now() }));
+        }
+    });
+    if (updates.length) {
+        try {
+            await Promise.all(updates);
+        } catch (e) {
+            console.error('Ошибка отметки прочтения:', e);
+        }
+    }
+}
+
 function listenToMessages() {
     if (unsubscribeMessages) unsubscribeMessages();
 
     const mergedMessages = new Map();
+
+    function insertBeforeTyping(node) {
+        const typingIndicator = document.getElementById('typingIndicator');
+        messagesArea.insertBefore(node, typingIndicator);
+    }
 
     function renderMessages() {
         messagesArea.innerHTML = '';
@@ -760,15 +862,14 @@ function listenToMessages() {
                 const divider = document.createElement('div');
                 divider.className = 'date-divider';
                 divider.innerHTML = `<span>${dateString}</span>`;
-                messagesArea.appendChild(divider);
+                insertBeforeTyping(divider);
                 lastDateString = dateString;
             }
 
             const timeString = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-            appendMessageNode(msg.text, isMyMessage, timeString);
+            appendMessageNode(msg, isMyMessage, timeString);
         });
 
-        ensureTypingIndicator();
         scrollToBottom();
     }
 
@@ -783,15 +884,16 @@ function listenToMessages() {
         messagesArea.appendChild(typingIndicator);
     }
 
-    function applySnapshot(snapshot) {
+    function applySnapshot(snapshot, markRead = false) {
         snapshot.docChanges().forEach((change) => {
             if (change.type === 'removed') {
                 mergedMessages.delete(change.doc.id);
             } else {
-                mergedMessages.set(change.doc.id, change.doc.data());
+                mergedMessages.set(change.doc.id, { id: change.doc.id, ...change.doc.data() });
             }
         });
         renderMessages();
+        if (markRead) markMessagesAsRead(snapshot);
     }
 
     const sentQuery = query(
@@ -813,8 +915,8 @@ function listenToMessages() {
         showNotification(getAuthErrorMessage(err), 'error');
     };
 
-    const unsubSent = onSnapshot(sentQuery, applySnapshot, onMessagesError);
-    const unsubReceived = onSnapshot(receivedQuery, applySnapshot, onMessagesError);
+    const unsubSent = onSnapshot(sentQuery, (snap) => applySnapshot(snap, false), onMessagesError);
+    const unsubReceived = onSnapshot(receivedQuery, (snap) => applySnapshot(snap, true), onMessagesError);
 
     unsubscribeMessages = () => {
         unsubSent();
@@ -822,16 +924,20 @@ function listenToMessages() {
     };
 }
 
-function appendMessageNode(text, isOut, time) {
+function appendMessageNode(msg, isOut, time) {
     const div = document.createElement('div');
     div.className = `message ${isOut ? 'msg-out' : 'msg-in'}`;
-    
+
+    const statusHtml = isOut
+        ? `<span class="msg-status ${msg.read ? 'read' : ''}"><svg><use href="#icon-${msg.read ? 'check-double' : 'check'}"></use></svg></span>`
+        : '';
+
     div.innerHTML = `
         <div class="msg-bubble">
-            ${text}
+            ${escapeHtml(msg.text)}
             <div class="msg-meta">
                 <span>${time}</span>
-                ${isOut ? `<span class="msg-status"><svg><use href="#icon-check-double"></use></svg></span>` : ''}
+                ${statusHtml}
             </div>
         </div>
     `;
@@ -866,19 +972,172 @@ backBtnMobile.addEventListener('click', () => {
 
 // Кнопка информации о чате
 const infoToggleBtn = document.getElementById('infoToggleBtn');
+const infoPanel = document.getElementById('infoPanel');
+const infoName = document.getElementById('infoName');
+const infoAvatar = document.getElementById('infoAvatar');
+const infoStatus = document.getElementById('infoStatus');
+const infoBio = document.getElementById('infoBio');
+const removeFriendBtn = document.getElementById('removeFriendBtn');
+const headerUserBtn = document.getElementById('headerUserBtn');
+
 infoToggleBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const panel = document.getElementById('infoPanel');
-    
-    // Обновляем панель информации
     if (currentChatFriend) {
-        document.getElementById('infoName').textContent = `@${currentChatFriend.username}`;
-        document.getElementById('infoAvatar').textContent = currentChatFriend.username.charAt(0).toUpperCase();
-        document.getElementById('infoAvatar').style.background = getUserColor(currentChatFriend.uid);
-        document.getElementById('infoStatus').textContent = 'В сети';
+        loadFriendInfoPanel(currentChatFriend);
     }
-    
-    panel.classList.toggle('open');
+    infoPanel.classList.toggle('open');
+});
+
+headerUserBtn.addEventListener('click', () => {
+    if (currentChatFriend) {
+        loadFriendInfoPanel(currentChatFriend);
+        infoPanel.classList.add('open');
+    }
+});
+
+removeFriendBtn.addEventListener('click', () => {
+    if (!currentChatFriend) return;
+    const requestId = currentChatFriend.requestId || friendsRequestMap.get(currentChatFriend.uid);
+    if (!requestId) {
+        showNotification('Не удалось найти заявку в друзья.', 'error');
+        return;
+    }
+    showCustomConfirm(
+        'Удалить из друзей',
+        `Удалить ${currentChatFriend.username} из друзей?`,
+        async () => {
+            try {
+                await deleteDoc(doc(db, 'friend_requests', requestId));
+                infoPanel.classList.remove('open');
+                closeChat();
+                showNotification('Пользователь удалён из друзей.', 'success');
+            } catch (e) {
+                showNotification(getAuthErrorMessage(e), 'error');
+            }
+        }
+    );
+});
+
+async function loadFriendInfoPanel(friend) {
+    infoName.textContent = friend.username;
+    infoStatus.textContent = 'В сети';
+    applyAvatarToElement(infoAvatar, friend);
+
+    try {
+        const profile = await fetchUserProfile(friend.uid);
+        if (!profile) return;
+        infoBio.textContent = formatProfileBio(profile.bio);
+        applyAvatarToElement(infoAvatar, profile);
+        applyAvatarToElement(activeAvatar, profile);
+        currentChatFriend = { ...currentChatFriend, ...profile, requestId: currentChatFriend.requestId };
+    } catch (e) {
+        infoBio.textContent = formatProfileBio('');
+    }
+}
+
+/* === ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ === */
+const profileModal = document.getElementById('profileModal');
+const profileModalTitle = document.getElementById('profileModalTitle');
+const profileModalAvatar = document.getElementById('profileModalAvatar');
+const profileAvatarInput = document.getElementById('profileAvatarInput');
+const profileUsernameDisplay = document.getElementById('profileUsernameDisplay');
+const profileEmailInput = document.getElementById('profileEmailInput');
+const profilePasswordInput = document.getElementById('profilePasswordInput');
+const profileBioInput = document.getElementById('profileBioInput');
+const profileSaveBtn = document.getElementById('profileSaveBtn');
+const profileCloseBtn = document.getElementById('profileCloseBtn');
+let profileModalMode = 'self';
+
+function openSelfProfileModal() {
+    profileModalMode = 'self';
+    profileModalTitle.textContent = 'Мой профиль';
+    fillSelfProfileForm();
+    profileModal.classList.add('active');
+}
+
+function fillSelfProfileForm() {
+    if (!currentUser) return;
+    profileUsernameDisplay.textContent = currentUser.username;
+    profileEmailInput.value = auth.currentUser?.email || '';
+    profilePasswordInput.value = '';
+    profileBioInput.value = currentUser.bio || '';
+    applyAvatarToElement(profileModalAvatar, currentUser);
+}
+
+profileCloseBtn.addEventListener('click', () => profileModal.classList.remove('active'));
+profileModal.addEventListener('click', (e) => {
+    if (e.target === profileModal) profileModal.classList.remove('active');
+});
+
+myProfileBtn.addEventListener('click', openSelfProfileModal);
+
+profileModalAvatar.addEventListener('click', () => profileAvatarInput.click());
+
+profileAvatarInput.addEventListener('change', async () => {
+    const file = profileAvatarInput.files?.[0];
+    profileAvatarInput.value = '';
+    if (!file || !currentUser) return;
+
+    if (!file.type.startsWith('image/')) {
+        showNotification('Выберите изображение.', 'error');
+        return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+        showNotification('Файл слишком большой (макс. 2 МБ).', 'error');
+        return;
+    }
+
+    try {
+        profileSaveBtn.disabled = true;
+        profileSaveBtn.textContent = 'Загрузка...';
+        const storageRef = ref(storage, `avatars/${currentUser.uid}/avatar.jpg`);
+        await uploadBytes(storageRef, file);
+        const avatarUrl = await getDownloadURL(storageRef);
+        await updateDoc(doc(db, 'users', currentUser.uid), { avatarUrl });
+        currentUser.avatarUrl = avatarUrl;
+        applyAvatarToElement(profileModalAvatar, currentUser);
+        applyAvatarToElement(myProfileAvatar, currentUser);
+        showNotification('Аватар обновлён.', 'success');
+    } catch (e) {
+        showNotification(getAuthErrorMessage(e), 'error');
+    } finally {
+        profileSaveBtn.disabled = false;
+        profileSaveBtn.textContent = 'Сохранить';
+    }
+});
+
+profileSaveBtn.addEventListener('click', async () => {
+    if (!currentUser || !auth.currentUser) return;
+
+    const newEmail = profileEmailInput.value.trim();
+    const password = profilePasswordInput.value;
+    const bio = profileBioInput.value.trim().slice(0, 300);
+
+    profileSaveBtn.disabled = true;
+    profileSaveBtn.textContent = 'Сохранение...';
+
+    try {
+        const emailChanged = newEmail && newEmail !== auth.currentUser.email;
+        if (emailChanged) {
+            if (!password) {
+                throw new Error('Для смены email введите текущий пароль.');
+            }
+            const credential = EmailAuthProvider.credential(auth.currentUser.email, password);
+            await reauthenticateWithCredential(auth.currentUser, credential);
+            await updateEmail(auth.currentUser, newEmail);
+        }
+
+        await updateDoc(doc(db, 'users', currentUser.uid), { bio });
+        currentUser.bio = bio;
+        profilePasswordInput.value = '';
+        showNotification('Профиль сохранён.', 'success');
+        profileModal.classList.remove('active');
+    } catch (e) {
+        showNotification(getAuthErrorMessage(e), 'error');
+    } finally {
+        profileSaveBtn.disabled = false;
+        profileSaveBtn.textContent = 'Сохранить';
+    }
 });
 
 /* === СИСТЕМА ЗВОНКОВ (КРАСИВАЯ АНИМАЦИЯ ДЛЯ ТЕСТА) === */
@@ -903,12 +1162,11 @@ function startCall(type) {
     currentCallType = type;
     
     document.getElementById('callTypeText').textContent = type === 'video' ? 'Исходящий видеозвонок' : 'Исходящий аудиозвонок';
-    document.getElementById('callName').textContent = `@${currentChatFriend.username}`;
+    document.getElementById('callName').textContent = currentChatFriend.username;
     document.getElementById('callStatus').textContent = 'Гудки...';
     
     const av = document.getElementById('callAvatar');
-    av.textContent = currentChatFriend.username.charAt(0).toUpperCase();
-    av.style.background = getUserColor(currentChatFriend.uid);
+    applyAvatarToElement(av, currentChatFriend);
     
     callModal.classList.add('active');
 

@@ -64,8 +64,14 @@ service cloud.firestore {
         && request.resource.data.text is string
         && request.resource.data.text.size() > 0
         && request.resource.data.text.size() <= 4000
-        && request.resource.data.createdAt is number;
-      allow update, delete: if false;
+        && request.resource.data.createdAt is number
+        && request.resource.data.read == false;
+      allow update: if isSignedIn()
+        && resource.data.receiverUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt'])
+        && request.resource.data.read == true
+        && request.resource.data.readAt is number;
+      allow delete: if false;
     }
   }
 }
