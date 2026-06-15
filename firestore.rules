@@ -58,7 +58,13 @@ service cloud.firestore {
         resource.data.receiverUid == request.auth.uid
       );
       allow create: if isSignedIn()
-        && request.resource.data.senderUid == request.auth.uid;
+        && request.resource.data.senderUid == request.auth.uid
+        && request.resource.data.receiverUid is string
+        && request.resource.data.receiverUid != request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 4000
+        && request.resource.data.createdAt is number;
       allow update, delete: if false;
     }
   }

@@ -18,8 +18,7 @@ import {
     onSnapshot,
     updateDoc,
     deleteDoc,
-    limit,
-    orderBy
+    limit
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 /* === ЛОКАЛЬНОЕ СОСТОЯНИЕ === */
@@ -115,6 +114,7 @@ function getAuthErrorMessage(error) {
         'auth/invalid-email': 'Некорректный логин.',
         'auth/operation-not-allowed': 'Авторизация временно недоступна.',
         'permission-denied': 'Нет доступа к базе данных. Опубликуй правила из firestore.rules в Firebase Console.',
+        'failed-precondition': 'Нужен индекс Firestore. Обнови правила и перезагрузи страницу.',
     };
 
     let code = error?.code;
@@ -735,7 +735,7 @@ async function sendMessage() {
         sendBtn.style.display = 'none';
     } catch (e) {
         console.error("Ошибка отправки сообщения:", e);
-        showNotification('Не удалось отправить сообщение.', 'error');
+        showNotification(getAuthErrorMessage(e), 'error');
     }
 }
 
@@ -746,6 +746,7 @@ function listenToMessages() {
 
     function renderMessages() {
         messagesArea.innerHTML = '';
+        ensureTypingIndicator();
         let lastDateString = '';
 
         const sorted = Array.from(mergedMessages.values()).sort((a, b) => a.createdAt - b.createdAt);
@@ -767,9 +768,19 @@ function listenToMessages() {
             appendMessageNode(msg.text, isMyMessage, timeString);
         });
 
-        const typingIndicator = document.getElementById('typingIndicator');
-        messagesArea.appendChild(typingIndicator);
+        ensureTypingIndicator();
         scrollToBottom();
+    }
+
+    function ensureTypingIndicator() {
+        let typingIndicator = document.getElementById('typingIndicator');
+        if (!typingIndicator) {
+            typingIndicator = document.createElement('div');
+            typingIndicator.className = 'typing-indicator';
+            typingIndicator.id = 'typingIndicator';
+            typingIndicator.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+        }
+        messagesArea.appendChild(typingIndicator);
     }
 
     function applySnapshot(snapshot) {
@@ -786,24 +797,24 @@ function listenToMessages() {
     const sentQuery = query(
         collection(db, 'messages'),
         where('senderUid', '==', currentUser.uid),
-        where('receiverUid', '==', currentChatFriend.uid),
-        orderBy('createdAt', 'asc')
+        where('receiverUid', '==', currentChatFriend.uid)
     );
     const receivedQuery = query(
         collection(db, 'messages'),
         where('senderUid', '==', currentChatFriend.uid),
-        where('receiverUid', '==', currentUser.uid),
-        orderBy('createdAt', 'asc')
+        where('receiverUid', '==', currentUser.uid)
     );
 
-    const unsubSent = onSnapshot(sentQuery, applySnapshot, (err) => {
+    let messagesLoadErrorShown = false;
+    const onMessagesError = (err) => {
         console.error('Ошибка загрузки сообщений:', err);
-        showNotification('Не удалось загрузить сообщения.', 'error');
-    });
-    const unsubReceived = onSnapshot(receivedQuery, applySnapshot, (err) => {
-        console.error('Ошибка загрузки сообщений:', err);
-        showNotification('Не удалось загрузить сообщения.', 'error');
-    });
+        if (messagesLoadErrorShown) return;
+        messagesLoadErrorShown = true;
+        showNotification(getAuthErrorMessage(err), 'error');
+    };
+
+    const unsubSent = onSnapshot(sentQuery, applySnapshot, onMessagesError);
+    const unsubReceived = onSnapshot(receivedQuery, applySnapshot, onMessagesError);
 
     unsubscribeMessages = () => {
         unsubSent();
