@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Libero Messenger</title>
-    <link rel="stylesheet" href="./style.css?v=15">
+    <link rel="stylesheet" href="./style.css?v=14">
     <script>
     (function () {
         function ensureContainer() {
@@ -55,7 +55,6 @@
         <symbol id="icon-smile" viewBox="0 0 24 24"><path d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-mic" viewBox="0 0 24 24"><path d="M19 10v2a7 7 0 01-14 0v-2m7 9v-4m0-11a3 3 0 00-3 3v4a3 3 0 106 0V6a3 3 0 00-3-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-send" viewBox="0 0 24 24"><path d="M3 12h11M3 12l18-9-4 18-5-6-9-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
-        <symbol id="icon-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-check-double" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7M10 17l5-5M15 12l5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-x" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
@@ -97,10 +96,7 @@
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <button class="menu-toggle" id="menuToggleBtn"><svg style="width:24px;height:24px;fill:var(--text-main)"><use href="#icon-menu"></use></svg></button>
-            <button class="my-profile-btn" id="myProfileBtn" title="Мой профиль">
-                <div class="avatar sidebar-profile-avatar" id="myProfileAvatar"></div>
-                <h1 style="font-size: 20px; font-weight: 700; letter-spacing: 1px;" id="myProfileName">Libero</h1>
-            </button>
+            <h1 style="font-size: 20px; font-weight: 700; letter-spacing: 1px;" id="myProfileName">Libero</h1>
             <div style="display: flex; gap: 10px;">
                 <button id="themeToggleBtn" title="Сменить тему" style="font-size: 16px;">🌓</button>
                 <button id="logoutBtn" title="Выйти" style="font-size: 16px;"><svg style="width:20px;height:20px;stroke:var(--text-main)"><use href="#icon-logout"></use></svg></button>
@@ -123,7 +119,7 @@
 
     <div class="main-chat" id="mainChat">
         <div class="chat-header" id="chatHeader" style="display:none;">
-            <div class="header-user" id="headerUserBtn">
+            <div class="header-user">
                 <button class="back-btn" id="backBtnMobile"><svg style="width:24px;height:24px"><use href="#icon-back"></use></svg></button>
                 <div class="avatar-container" style="width:40px;height:40px;">
                     <div class="avatar" id="activeAvatar" style="font-size: 16px;"></div>
@@ -172,10 +168,15 @@
         </div>
         <div class="info-section">
             <h3>Описание</h3>
-            <p style="font-size: 14px; line-height: 1.5;" id="infoBio">Описание не указано.</p>
+            <p style="font-size: 14px; line-height: 1.5;">В сети. Занят разработкой. Писать только по делу.</p>
         </div>
         <div class="info-section">
-            <button class="danger-btn" id="removeFriendBtn">Удалить из друзей</button>
+            <h3>Вложения</h3>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 10px;">
+                <div style="aspect-ratio: 1; background: var(--glass-border); border-radius: 8px;"></div>
+                <div style="aspect-ratio: 1; background: var(--glass-border); border-radius: 8px;"></div>
+                <div style="aspect-ratio: 1; background: var(--glass-border); border-radius: 8px;"></div>
+            </div>
         </div>
     </div>
 
@@ -221,36 +222,11 @@
     </div>
 </div>
 
-<div class="modal-overlay profile-modal" id="profileModal">
-    <div class="profile-card">
-        <div class="profile-card-header">
-            <h2 id="profileModalTitle">Мой профиль</h2>
-            <button class="profile-close-btn" id="profileCloseBtn" title="Закрыть">✕</button>
-        </div>
-        <div class="profile-avatar-wrap">
-            <div class="avatar profile-modal-avatar" id="profileModalAvatar"></div>
-            <span class="profile-avatar-hint">Нажмите, чтобы сменить фото</span>
-            <input type="file" id="profileAvatarInput" accept="image/*" hidden>
-        </div>
-        <div class="profile-form">
-            <label class="profile-label">Логин</label>
-            <div class="profile-readonly" id="profileUsernameDisplay">username</div>
-            <label class="profile-label" for="profileEmailInput">Email</label>
-            <input type="email" class="input-field" id="profileEmailInput" autocomplete="email">
-            <label class="profile-label" for="profilePasswordInput">Текущий пароль (для смены email)</label>
-            <input type="password" class="input-field" id="profilePasswordInput" autocomplete="current-password" placeholder="Введите пароль">
-            <label class="profile-label" for="profileBioInput">Описание</label>
-            <textarea class="input-field profile-bio-input" id="profileBioInput" maxlength="300" placeholder="Расскажите о себе..."></textarea>
-            <button type="button" class="auth-btn" id="profileSaveBtn">Сохранить</button>
-        </div>
-    </div>
-</div>
-
-<script type="module" src="./scripts.js?v=15"></script>
+<script type="module" src="./scripts.js?v=14"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js?v=15')
+      navigator.serviceWorker.register('./sw.js?v=14')
         .then(reg => {
           console.log('Service Worker успешно зарегистрирован!', reg);
           reg.update();
