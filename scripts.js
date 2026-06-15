@@ -679,7 +679,7 @@ function selectFriendChat(friend) {
     chatInputArea.style.display = 'flex';
 
     // Заполняем шапку чата
-    activeName.textContent = `@${friend.username}`;
+    activeName.textContent = friend.username;
     activeAvatar.textContent = friend.username.charAt(0).toUpperCase();
     activeAvatar.style.background = getUserColor(friend.uid);
     activeStatus.textContent = 'в сети';
@@ -726,7 +726,8 @@ async function sendMessage() {
             senderUid: currentUser.uid,
             receiverUid: currentChatFriend.uid,
             text: text,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            isRead: false // Добавили поле статуса прочтения
         });
 
         messageInput.value = '';
@@ -745,9 +746,9 @@ function listenToMessages() {
     const mergedMessages = new Map();
 
     function renderMessages() {
-        messagesArea.innerHTML = '';
-        ensureTypingIndicator();
+        messagesArea.innerHTML = ''; // Сбрасываем поле
         let lastDateString = '';
+        const unreadIds = [];
 
         const sorted = Array.from(mergedMessages.values()).sort((a, b) => a.createdAt - b.createdAt);
 
@@ -756,20 +757,28 @@ function listenToMessages() {
             const date = new Date(msg.createdAt);
             const dateString = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 
+            // Отрисовываем разделитель строго ПЕРЕД сообщениями текущего дня
             if (dateString !== lastDateString) {
-                const divider = document.createElement('div');
-                divider.className = 'date-divider';
-                divider.innerHTML = `<span>${dateString}</span>`;
-                messagesArea.appendChild(divider);
+                appendDividerNode(dateString);
                 lastDateString = dateString;
             }
 
             const timeString = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-            appendMessageNode(msg.text, isMyMessage, timeString);
+            appendMessageNode(msg.text, isMyMessage, timeString, msg.isRead);
+
+            // Если сообщение для нас и не прочитано — собираем ID для обновления
+            if (!isMyMessage && !msg.isRead && msg.id) {
+                unreadIds.push(msg.id);
+            }
         });
 
-        ensureTypingIndicator();
+        ensureTypingIndicator(); // Ставим индикатор всегда в самый низ
         scrollToBottom();
+
+        // Асинхронно помечаем прочитанными в БД
+        unreadIds.forEach(id => {
+            updateDoc(doc(db, 'messages', id), { isRead: true }).catch(console.error);
+        });
     }
 
     function ensureTypingIndicator() {
@@ -788,7 +797,9 @@ function listenToMessages() {
             if (change.type === 'removed') {
                 mergedMessages.delete(change.doc.id);
             } else {
-                mergedMessages.set(change.doc.id, change.doc.data());
+                const data = change.doc.data();
+                data.id = change.doc.id; // Обязательно сохраняем ID документа
+                mergedMessages.set(change.doc.id, data);
             }
         });
         renderMessages();
@@ -822,21 +833,30 @@ function listenToMessages() {
     };
 }
 
-function appendMessageNode(text, isOut, time) {
+function appendDividerNode(dateString) {
+    const div = document.createElement('div');
+    div.className = 'date-divider';
+    div.innerHTML = `<span>${dateString}</span>`;
+    messagesArea.appendChild(div); // Добавляем в конец
+}
+
+function appendMessageNode(text, isOut, time, isRead) {
     const div = document.createElement('div');
     div.className = `message ${isOut ? 'msg-out' : 'msg-in'}`;
+    
+    // Одна галочка если отправлено, две если прочитано
+    const tickIcon = isRead ? '#icon-check-double' : '#icon-check';
     
     div.innerHTML = `
         <div class="msg-bubble">
             ${text}
             <div class="msg-meta">
                 <span>${time}</span>
-                ${isOut ? `<span class="msg-status"><svg><use href="#icon-check-double"></use></svg></span>` : ''}
+                ${isOut ? `<span class="msg-status"><svg><use href="${tickIcon}"></use></svg></span>` : ''}
             </div>
         </div>
     `;
-    const typingIndicator = document.getElementById('typingIndicator');
-    messagesArea.insertBefore(div, typingIndicator);
+    messagesArea.appendChild(div); // Добавляем в конец (порядок теперь правильный)
 }
 
 function scrollToBottom() {
@@ -872,7 +892,8 @@ infoToggleBtn.addEventListener('click', (e) => {
     
     // Обновляем панель информации
     if (currentChatFriend) {
-        document.getElementById('infoName').textContent = `@${currentChatFriend.username}`;
+        // Было: document.getElementById('infoName').textContent = `@${currentChatFriend.username}`;
+    document.getElementById('infoName').textContent = currentChatFriend.username;
         document.getElementById('infoAvatar').textContent = currentChatFriend.username.charAt(0).toUpperCase();
         document.getElementById('infoAvatar').style.background = getUserColor(currentChatFriend.uid);
         document.getElementById('infoStatus').textContent = 'В сети';
@@ -903,7 +924,7 @@ function startCall(type) {
     currentCallType = type;
     
     document.getElementById('callTypeText').textContent = type === 'video' ? 'Исходящий видеозвонок' : 'Исходящий аудиозвонок';
-    document.getElementById('callName').textContent = `@${currentChatFriend.username}`;
+    document.getElementById('callName').textContent = currentChatFriend.username;
     document.getElementById('callStatus').textContent = 'Гудки...';
     
     const av = document.getElementById('callAvatar');
