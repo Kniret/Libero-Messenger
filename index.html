@@ -63,7 +63,7 @@
 
 <!-- Окно авторизации -->
 <div class="auth-container" id="authContainer">
-    <div class="auth-card">
+    <div class="auth-card" id="mainAuthCard">
         <h2 style="margin-bottom: 5px; font-weight: 800; letter-spacing: 2px; color: var(--primary);">LIBERO</h2>
         <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 25px;">Мессенджер для друзей и близких</p>
         
@@ -73,9 +73,21 @@
         </div>
         
         <div class="auth-form" id="authForm">
-            <input type="text" placeholder="Логин" class="input-field" id="authLogin" autocomplete="username" maxlength="20" pattern="[a-z0-9]{3,20}" spellcheck="false">
+            <input type="email" placeholder="Email" class="input-field" id="authEmail" autocomplete="email">
             <input type="password" placeholder="Пароль" class="input-field" id="authPassword" autocomplete="current-password">
             <button type="button" class="auth-btn" id="authSubmitBtn">Войти</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="usernameModal">
+    <div class="auth-card">
+        <h2 style="margin-bottom: 5px; font-weight: 800; color: var(--primary);">ШАГ 2</h2>
+        <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 25px;">Придумайте уникальный логин для поиска</p>
+        
+        <div class="auth-form">
+            <input type="text" placeholder="Логин (от 3 до 20 символов)" class="input-field" id="setupUsernameInput" autocomplete="off" maxlength="20" pattern="[a-z0-9]{3,20}" spellcheck="false">
+            <button type="button" class="auth-btn" id="setupUsernameBtn">Сохранить и войти</button>
         </div>
     </div>
 </div>

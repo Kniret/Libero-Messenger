@@ -179,12 +179,19 @@ window.alert = (msg) => showNotification(getAuthErrorMessage({ message: String(m
 
 /* === УПРАВЛЕНИЕ АВТОРИЗАЦИЕЙ === */
 const authContainer = document.getElementById('authContainer');
+const mainAuthCard = document.getElementById('mainAuthCard');
 const appContainer = document.getElementById('appContainer');
+
 const tabLoginBtn = document.getElementById('tabLoginBtn');
 const tabRegisterBtn = document.getElementById('tabRegisterBtn');
 const authSubmitBtn = document.getElementById('authSubmitBtn');
-const authLoginInput = document.getElementById('authLogin');
+const authEmailInput = document.getElementById('authEmail'); // Теперь тут Email
 const authPasswordInput = document.getElementById('authPassword');
+
+const usernameModal = document.getElementById('usernameModal');
+const setupUsernameInput = document.getElementById('setupUsernameInput');
+const setupUsernameBtn = document.getElementById('setupUsernameBtn');
+
 const logoutBtn = document.getElementById('logoutBtn');
 const myProfileName = document.getElementById('myProfileName');
 
@@ -203,11 +210,12 @@ tabRegisterBtn.addEventListener('click', () => {
     authSubmitBtn.textContent = 'Зарегистрироваться';
 });
 
-// Сабмит формы авторизации
-authLoginInput.addEventListener('input', () => {
-    const cleaned = normalizeLoginInput(authLoginInput.value);
-    if (authLoginInput.value !== cleaned) {
-        authLoginInput.value = cleaned;
+// Сабмит формы авторизации (теперь чистый Email + Пароль)
+authSubmitBtn.addEventListener('click', handleAuthSubmit);
+authPasswordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        handleAuthSubmit();
     }
 });
 
@@ -220,21 +228,11 @@ authPasswordInput.addEventListener('keydown', (e) => {
 });
 
 async function handleAuthSubmit() {
-    const rawLogin = authLoginInput.value.trim().toLowerCase();
+    const email = authEmailInput.value.trim();
     const password = authPasswordInput.value.trim();
 
-    if (!rawLogin || !password) {
+    if (!email || !password) {
         showNotification('Пожалуйста, заполните все поля!', 'error');
-        return;
-    }
-
-    if (rawLogin.length < 3) {
-        showNotification('Логин должен быть не менее 3-х символов!', 'error');
-        return;
-    }
-
-    if (!isValidLogin(rawLogin)) {
-        showNotification('Логин: только английские буквы и цифры (a-z, 0-9), от 3 до 20 символов.', 'error');
         return;
     }
 
@@ -243,52 +241,19 @@ async function handleAuthSubmit() {
         return;
     }
 
-    // Блокируем кнопку на время запроса
     authSubmitBtn.disabled = true;
     authSubmitBtn.textContent = 'Загрузка...';
 
-    const fakeEmail = `${rawLogin}@libero.app`;
-
     try {
         if (activeTab === 'login') {
-            // Вход
-            await signInWithEmailAndPassword(auth, fakeEmail, password);
-       } else {
-            isRegistering = true; // Блокируем onAuthStateChanged
-            
-            const userCredential = await createUserWithEmailAndPassword(auth, fakeEmail, password);
-            const uid = userCredential.user.uid;
-
-            try {
-                const userRef = doc(db, 'users_by_username', rawLogin);
-                const userSnap = await getDoc(userRef);
-
-                if (userSnap.exists()) {
-                    throw new Error('Этот логин уже занят другим пользователем!');
-                }
-
-                await setDoc(doc(db, 'users', uid), {
-                    uid: uid,
-                    username: rawLogin,
-                    createdAt: Date.now()
-                });
-
-                await setDoc(userRef, { uid: uid });
-                
-                // Вручную инициализируем UI, так как документы успешно созданы
-                await loadUserProfileAndStart(userCredential.user);
-                
-            } catch (regError) {
-                await signOut(auth);
-                throw regError;
-            } finally {
-                isRegistering = false; // Снимаем блокировку
-            }
+            await signInWithEmailAndPassword(auth, email, password);
+        } else {
+            await createUserWithEmailAndPassword(auth, email, password);
         }
+        // Успешный вход перехватит onAuthStateChanged ниже
     } catch (error) {
         console.error('Ошибка авторизации:', error);
         showNotification(getAuthErrorMessage(error), 'error');
-    } finally {
         authSubmitBtn.disabled = false;
         authSubmitBtn.textContent = activeTab === 'login' ? 'Войти' : 'Зарегистрироваться';
     }
@@ -315,28 +280,110 @@ async function loadUserProfileAndStart(firebaseUser) {
         signOut(auth);
     }
 }
-// Слушатель состояния авторизации
+
 // Слушатель состояния авторизации
 onAuthStateChanged(auth, async (firebaseUser) => {
     if (firebaseUser) {
-        // Игнорируем фоновый вызов, если мы прямо сейчас создаем аккаунт
-        if (isRegistering) return; 
-        
-        await loadUserProfileAndStart(firebaseUser);
+        try {
+            const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+            
+            if (userSnap.exists()) {
+                // Пользователь существует и у него есть никнейм
+                currentUser = userSnap.data();
+                myProfileName.textContent = currentUser.username;
+                
+                authContainer.classList.add('hidden');
+                appContainer.classList.add('active');
+                usernameModal.classList.remove('active');
+
+                closeChat();
+                startListeningRequestsAndFriends();
+            } else {
+                // Пользователь только что зарегистрировался, у него нет никнейма в базе
+                mainAuthCard.style.display = 'none'; // Прячем форму входа
+                usernameModal.classList.add('active'); // Показываем модалку выбора логина
+            }
+        } catch (err) {
+            console.error("Ошибка проверки профиля:", err);
+            showNotification('Ошибка связи с базой данных.', 'error');
+        }
     } else {
-        // Выход из аккаунта
+        // Выход из аккаунта или не авторизован
         currentUser = null;
         stopAllSubscriptions();
         
-        // Сбрасываем UI
         authContainer.classList.remove('hidden');
+        mainAuthCard.style.display = 'block'; // Возвращаем форму входа
         appContainer.classList.remove('active');
-        authLoginInput.value = '';
+        usernameModal.classList.remove('active');
+        
+        authEmailInput.value = '';
         authPasswordInput.value = '';
+        setupUsernameInput.value = '';
+        
         document.getElementById('searchResults').innerHTML = '';
         document.getElementById('friendRequestsList').innerHTML = '';
         document.getElementById('chatList').innerHTML = '';
         closeChat();
+
+        authSubmitBtn.disabled = false;
+        authSubmitBtn.textContent = activeTab === 'login' ? 'Войти' : 'Зарегистрироваться';
+    }
+});
+
+// === ЛОГИКА СОЗДАНИЯ НИКНЕЙМА ===
+setupUsernameInput.addEventListener('input', () => {
+    setupUsernameInput.value = normalizeLoginInput(setupUsernameInput.value);
+});
+
+setupUsernameBtn.addEventListener('click', async () => {
+    const rawLogin = setupUsernameInput.value.trim();
+    const firebaseUser = auth.currentUser;
+
+    if (!firebaseUser) return;
+
+    if (rawLogin.length < 3 || !isValidLogin(rawLogin)) {
+        showNotification('Логин: только английские буквы и цифры (a-z, 0-9), от 3 до 20 символов.', 'error');
+        return;
+    }
+
+    setupUsernameBtn.disabled = true;
+    setupUsernameBtn.textContent = 'Проверка...';
+
+    try {
+        // 1. Проверяем, не занят ли логин
+        const userRef = doc(db, 'users_by_username', rawLogin);
+        const userSnap = await getDoc(userRef);
+
+        if (userSnap.exists()) {
+            throw new Error('Этот логин уже занят! Придумайте другой.');
+        }
+
+        // 2. Логин свободен, записываем данные в Firestore
+        await setDoc(doc(db, 'users', firebaseUser.uid), {
+            uid: firebaseUser.uid,
+            username: rawLogin,
+            createdAt: Date.now()
+        });
+
+        await setDoc(userRef, { uid: firebaseUser.uid });
+
+        // 3. Данные успешно записаны, обновляем UI
+        currentUser = { uid: firebaseUser.uid, username: rawLogin };
+        myProfileName.textContent = currentUser.username;
+        
+        usernameModal.classList.remove('active');
+        authContainer.classList.add('hidden');
+        appContainer.classList.add('active');
+        
+        startListeningRequestsAndFriends();
+
+    } catch (error) {
+        console.error('Ошибка сохранения логина:', error);
+        showNotification(error.message.includes('занят') ? error.message : 'Ошибка при сохранении логина.', 'error');
+    } finally {
+        setupUsernameBtn.disabled = false;
+        setupUsernameBtn.textContent = 'Сохранить и войти';
     }
 });
 
