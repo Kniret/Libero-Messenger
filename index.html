@@ -23,29 +23,69 @@
         <symbol id="icon-send" viewBox="0 0 24 24"><path d="M3 12h11M3 12l18-9-4 18-5-6-9-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
         <symbol id="icon-check-double" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7M10 17l5-5M15 12l5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-x" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
+        <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
     </defs>
 </svg>
 
-<div class="app-container">
+<!-- Окно авторизации -->
+<div class="auth-container" id="authContainer">
+    <div class="auth-card">
+        <h2 style="margin-bottom: 5px; font-weight: 800; letter-spacing: 2px; color: var(--primary);">LIBERO</h2>
+        <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 25px;">Мессенджер для друзей и близких</p>
+        
+        <div class="auth-tabs">
+            <div class="auth-tab active" id="tabLoginBtn">Вход</div>
+            <div class="auth-tab" id="tabRegisterBtn">Регистрация</div>
+        </div>
+        
+        <div class="auth-form" id="authForm">
+            <input type="text" placeholder="Ваш логин (например, katya)" class="input-field" id="authLogin" autocomplete="username">
+            <input type="password" placeholder="Пароль" class="input-field" id="authPassword" autocomplete="current-password">
+            <button class="auth-btn" id="authSubmitBtn">Войти</button>
+        </div>
+    </div>
+</div>
+
+<!-- Основной интерфейс приложения -->
+<div class="app-container" id="appContainer">
     
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <button class="menu-toggle" onclick="toggleTheme()"><svg style="width:24px;height:24px;fill:var(--text-main)"><use href="#icon-menu"></use></svg></button>
-            <h1 style="font-size: 20px; font-weight: 700; letter-spacing: 1px;">Libero</h1>
-            <button onclick="toggleTheme()" title="Сменить тему">🌓</button>
-        </div>
-        <div class="search-bar">
-            <svg style="width:18px;height:18px;fill:var(--text-muted)"><use href="#icon-search"></use></svg>
-            <input type="text" placeholder="Поиск чатов..." id="searchInput">
-        </div>
-        <div class="chat-list" id="chatList">
+            <button class="menu-toggle" id="themeToggleBtn"><svg style="width:24px;height:24px;fill:var(--text-main)"><use href="#icon-menu"></use></svg></button>
+            <h1 style="font-size: 20px; font-weight: 700; letter-spacing: 1px;" id="myProfileName">Libero</h1>
+            <div style="display: flex; gap: 10px;">
+                <button id="themeToggleBtn2" title="Сменить тему" style="font-size: 16px;">🌓</button>
+                <button id="logoutBtn" title="Выйти" style="font-size: 16px;"><svg style="width:20px;height:20px;stroke:var(--text-main)"><use href="#icon-logout"></use></svg></button>
             </div>
+        </div>
+
+        <!-- Поиск пользователей -->
+        <div class="sidebar-section-title">Найти друга</div>
+        <div class="search-bar" style="margin-bottom: 10px;">
+            <svg style="width:18px;height:18px;fill:var(--text-muted)"><use href="#icon-search"></use></svg>
+            <input type="text" placeholder="Поиск по логину..." id="userSearchInput">
+        </div>
+        <div class="search-results" id="searchResults">
+            <!-- Результаты поиска пользователей -->
+        </div>
+
+        <!-- Входящие заявки в друзья -->
+        <div class="sidebar-section-title" id="friendRequestsTitle" style="display:none;">Заявки в друзья</div>
+        <div class="friend-requests-list" id="friendRequestsList">
+            <!-- Список заявок -->
+        </div>
+
+        <!-- Список диалогов (только друзья) -->
+        <div class="sidebar-section-title">Диалоги</div>
+        <div class="chat-list" id="chatList">
+            <!-- Только принятые друзья будут здесь -->
+        </div>
     </div>
 
     <div class="main-chat" id="mainChat">
-        <div class="chat-header" id="chatHeader" onclick="toggleInfoPanel()">
+        <div class="chat-header" id="chatHeader" style="display:none;">
             <div class="header-user">
-                <button class="back-btn" onclick="toggleSidebar(event)"><svg style="width:24px;height:24px"><use href="#icon-back"></use></svg></button>
+                <button class="back-btn" id="backBtnMobile"><svg style="width:24px;height:24px"><use href="#icon-back"></use></svg></button>
                 <div class="avatar-container" style="width:40px;height:40px;">
                     <div class="avatar" id="activeAvatar" style="font-size: 16px;"></div>
                     <div class="online-dot active" id="activeOnline"></div>
@@ -56,26 +96,33 @@
                 </div>
             </div>
             <div class="header-actions">
-                <button onclick="startCall('voice', event)" title="Аудиозвонок"><svg><use href="#icon-call"></use></svg></button>
-                <button onclick="startCall('video', event)" title="Видеозвонок"><svg><use href="#icon-video"></use></svg></button>
-                <button onclick="toggleInfoPanel(event)" title="Информация"><svg><use href="#icon-more"></use></svg></button>
+                <button id="callVoiceBtn" title="Аудиозвонок"><svg><use href="#icon-call"></use></svg></button>
+                <button id="callVideoBtn" title="Видеозвонок"><svg><use href="#icon-video"></use></svg></button>
+                <button id="infoToggleBtn" title="Информация"><svg><use href="#icon-more"></use></svg></button>
             </div>
         </div>
 
-        <div class="messages-area" id="messagesArea">
+        <!-- Экран заглушки "выберите чат" -->
+        <div id="noChatSelectedScreen" style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; color:var(--text-muted); gap:15px; background:rgba(0,0,0,0.05);">
+            <div style="font-size: 48px;">💬</div>
+            <h2>Выберите собеседника из списка друзей</h2>
+            <p style="font-size: 14px;">Для общения вы должны состоять в друзьях</p>
+        </div>
+
+        <div class="messages-area" id="messagesArea" style="display:none;">
             <div class="typing-indicator" id="typingIndicator">
                 <div class="dot"></div><div class="dot"></div><div class="dot"></div>
             </div>
         </div>
 
-        <div class="chat-input-area">
+        <div class="chat-input-area" id="chatInputArea" style="display:none;">
             <button class="action-btn"><svg><use href="#icon-attach"></use></svg></button>
             <div class="input-wrapper">
                 <button class="action-btn" style="margin-right:10px; width:24px;height:24px;"><svg><use href="#icon-smile"></use></svg></button>
-                <textarea id="messageInput" placeholder="Написать сообщение..." rows="1" oninput="autoExpand(this)" onkeypress="handleEnter(event)"></textarea>
+                <textarea id="messageInput" placeholder="Написать сообщение..." rows="1"></textarea>
             </div>
             <button class="action-btn" id="micBtn"><svg><use href="#icon-mic"></use></svg></button>
-            <button class="action-btn send-btn" id="sendBtn" style="display:none;" onclick="sendMessage()"><svg style="fill:none;"><use href="#icon-send"></use></svg></button>
+            <button class="action-btn send-btn" id="sendBtn" style="display:none;"><svg style="fill:none;"><use href="#icon-send"></use></svg></button>
         </div>
     </div>
 
@@ -90,7 +137,7 @@
             <p style="font-size: 14px; line-height: 1.5;">В сети. Занят разработкой. Писать только по делу.</p>
         </div>
         <div class="info-section">
-            <h3>Вложения (42)</h3>
+            <h3>Вложения</h3>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 10px;">
                 <div style="aspect-ratio: 1; background: var(--glass-border); border-radius: 8px;"></div>
                 <div style="aspect-ratio: 1; background: var(--glass-border); border-radius: 8px;"></div>
@@ -112,8 +159,8 @@
         <div style="color: var(--text-muted);" id="callStatus">Соединение...</div>
         
         <div class="call-actions" id="incomingControls">
-            <button class="call-btn btn-reject" onclick="endCall()"><svg style="width:28px;height:28px;fill:none;"><use href="#icon-x"></use></svg></button>
-            <button class="call-btn btn-accept" onclick="acceptCall()"><svg style="width:28px;height:28px;fill:none;"><use href="#icon-call"></use></svg></button>
+            <button class="call-btn btn-reject" id="callRejectBtn"><svg style="width:28px;height:28px;fill:none;"><use href="#icon-x"></use></svg></button>
+            <button class="call-btn btn-accept" id="callAcceptBtn"><svg style="width:28px;height:28px;fill:none;"><use href="#icon-call"></use></svg></button>
         </div>
     </div>
 </div>
@@ -125,12 +172,12 @@
         <div class="vc-controls">
             <button class="call-btn btn-control"><svg style="width:24px;height:24px;fill:none;"><use href="#icon-mic"></use></svg></button>
             <button class="call-btn btn-control"><svg style="width:24px;height:24px;fill:none;"><use href="#icon-video"></use></svg></button>
-            <button class="call-btn btn-reject" onclick="endCall()"><svg style="width:24px;height:24px;fill:none;"><use href="#icon-x"></use></svg></button>
+            <button class="call-btn btn-reject" id="videoCallEndBtn"><svg style="width:24px;height:24px;fill:none;"><use href="#icon-x"></use></svg></button>
         </div>
     </div>
 </div>
 
-<script src="./scripts.js"></script>
+<script type="module" src="./scripts.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

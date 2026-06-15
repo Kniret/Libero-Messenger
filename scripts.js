@@ -1,265 +1,587 @@
-/* === ДАННЫЕ И ГЕНЕРАЦИЯ === */
-const firstNames = ["Алексей", "Мария", "Дмитрий", "Елена", "Максим", "Анна", "Иван", "Дарья", "Сергей", "Ольга"];
+// scripts.js
+import { auth, db } from './firebase.js';
+import { 
+    signInWithEmailAndPassword, 
+    createUserWithEmailAndPassword, 
+    onAuthStateChanged, 
+    signOut 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { 
+    collection, 
+    doc, 
+    setDoc, 
+    getDoc, 
+    getDocs, 
+    query, 
+    where, 
+    addDoc, 
+    onSnapshot,
+    updateDoc,
+    deleteDoc,
+    limit,
+    orderBy
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+/* === ЛОКАЛЬНОЕ СОСТОЯНИЕ === */
+let currentUser = null; // { uid, username }
+let currentChatFriend = null; // { uid, username, color }
+let activeTab = 'login'; // 'login' | 'register'
+let unsubscribeMessages = null;
+let unsubscribeFriends = null;
+let unsubscribeRequests = null;
+let userColorsCache = {};
+
+// Предопределенные цвета аватаров
 const avatarsBg = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#0ea5e9", "#6366f1", "#a855f7", "#ec4899"];
 
-// Специальные чаты для демонстрации
-const specialChats = [
-    { id: 'c1', name: 'Катя 💜', avatarStr: 'К', color: '#a855f7', lastMsg: 'Зайду в плейс через 10 мин 🥰', time: '14:20', unread: 2, online: true, pinned: true },
-    { id: 'c2', name: 'Бизнес Ассистент [BOT]', avatarStr: 'БА', color: '#3b82f6', lastMsg: 'Новая заявка на обработку: #1042', time: '13:05', unread: 0, online: true, pinned: true },
-    { id: 'c3', name: 'Low Poly Gang', avatarStr: 'LP', color: '#10b981', lastMsg: 'Кто-то запекал нормали сегодня?', time: 'Вчера', unread: 5, online: false, pinned: false },
-    { id: 'c4', name: 'Dev Squad', avatarStr: 'DS', color: '#f59e0b', lastMsg: 'Скинул коммит на GitHub Pages', time: 'Вчера', unread: 0, online: true, pinned: false },
-];
-
-let chats = [...specialChats];
-
-// Генерация остальных чатов до 30
-for(let i=5; i<=30; i++) {
-    const name = firstNames[Math.floor(Math.random() * firstNames.length)] + " " + String.fromCharCode(65 + Math.floor(Math.random() * 26));
-    chats.push({
-        id: 'c'+i,
-        name: name,
-        avatarStr: name.charAt(0),
-        color: avatarsBg[Math.floor(Math.random() * avatarsBg.length)],
-        lastMsg: ['Ок', 'Спасибо!', 'Глянь файл', 'Завтра обсудим', '👍', 'Где ты?'][Math.floor(Math.random() * 6)],
-        time: 'Пн',
-        unread: Math.random() > 0.8 ? Math.floor(Math.random() * 10) + 1 : 0,
-        online: Math.random() > 0.6,
-        pinned: false
-    });
-}
-
-let currentChatId = 'c1';
-
-// Пул реалистичных сообщений для генерации 200 сообщений истории (фокус на Катю/разработку)
-const msgPool = [
-    "Привет!", "Как дела с дипломом?", "Я доделал авторизацию через Firebase.", 
-    "Смотри, скрипт на Luau работает отлично, NPC не застревают.", 
-    "Красиво получилось!", "Да, эффект стекла топ.", "На ПК не видно что чел с телефона печатает, а если с телефона смотреть то видно... надо фиксить 😅", 
-    "Скинул референсы для блендера.", "Погнали в КС?", "Ага", "Понял", "Запускаю..."
-];
-
-const generatedHistory = [];
-let dateMock = new Date();
-dateMock.setDate(dateMock.getDate() - 5);
-
-for(let i=0; i<200; i++) {
-    if(i%40 === 0) {
-        dateMock.setDate(dateMock.getDate() + 1);
-        generatedHistory.push({ type: 'date', text: dateMock.toLocaleDateString('ru-RU', {day: 'numeric', month: 'long'}) });
+function getUserColor(uid) {
+    if (!userColorsCache[uid]) {
+        let hash = 0;
+        for (let i = 0; i < uid.length; i++) {
+            hash = uid.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const index = Math.abs(hash) % avatarsBg.length;
+        userColorsCache[uid] = avatarsBg[index];
     }
-    const isOut = Math.random() > 0.5;
-    let text = msgPool[Math.floor(Math.random() * msgPool.length)];
-    if(i === 198) text = "Я делаю модельку персонажа для нашей игры)";
-    if(i === 199) text = "Зайду в плейс через 10 мин 🥰"; // Последнее сообщение Кати
-    
-    generatedHistory.push({
-        type: 'msg',
-        text: text,
-        out: isOut,
-        time: '14:' + (i%60 < 10 ? '0'+(i%60) : i%60),
-        read: true
-    });
+    return userColorsCache[uid];
 }
 
-/* === ИНИЦИАЛИЗАЦИЯ И РЕНДЕР === */
-function init() {
-    renderChats();
-    selectChat('c1');
-    
-    // Поиск
-    document.getElementById('searchInput').addEventListener('input', (e) => {
-        const val = e.target.value.toLowerCase();
-        document.querySelectorAll('.chat-item').forEach(el => {
-            const name = el.querySelector('.chat-name').textContent.toLowerCase();
-            el.style.display = name.includes(val) ? 'flex' : 'none';
+/* === УПРАВЛЕНИЕ АВТОРИЗАЦИЕЙ === */
+const authContainer = document.getElementById('authContainer');
+const appContainer = document.getElementById('appContainer');
+const tabLoginBtn = document.getElementById('tabLoginBtn');
+const tabRegisterBtn = document.getElementById('tabRegisterBtn');
+const authSubmitBtn = document.getElementById('authSubmitBtn');
+const authLoginInput = document.getElementById('authLogin');
+const authPasswordInput = document.getElementById('authPassword');
+const logoutBtn = document.getElementById('logoutBtn');
+const myProfileName = document.getElementById('myProfileName');
+
+// Переключение табов
+tabLoginBtn.addEventListener('click', () => {
+    activeTab = 'login';
+    tabLoginBtn.classList.add('active');
+    tabRegisterBtn.classList.remove('active');
+    authSubmitBtn.textContent = 'Войти';
+});
+
+tabRegisterBtn.addEventListener('click', () => {
+    activeTab = 'register';
+    tabRegisterBtn.classList.add('active');
+    tabLoginBtn.classList.remove('active');
+    authSubmitBtn.textContent = 'Зарегистрироваться';
+});
+
+// Сабмит формы авторизации
+authSubmitBtn.addEventListener('click', handleAuthSubmit);
+
+async function handleAuthSubmit() {
+    const rawLogin = authLoginInput.value.trim().toLowerCase();
+    const password = authPasswordInput.value.trim();
+
+    if (!rawLogin || !password) {
+        alert('Пожалуйста, заполните все поля!');
+        return;
+    }
+
+    if (rawLogin.length < 3) {
+        alert('Логин должен быть не менее 3-х символов!');
+        return;
+    }
+
+    if (password.length < 6) {
+        alert('Пароль должен быть не менее 6 символов!');
+        return;
+    }
+
+    // Блокируем кнопку на время запроса
+    authSubmitBtn.disabled = true;
+    authSubmitBtn.textContent = 'Загрузка...';
+
+    const fakeEmail = `${rawLogin}@libero.app`;
+
+    try {
+        if (activeTab === 'login') {
+            // Вход
+            await signInWithEmailAndPassword(auth, fakeEmail, password);
+        } else {
+            // Регистрация: Проверяем, свободен ли логин
+            const userRef = doc(db, 'users_by_username', rawLogin);
+            const userSnap = await getDoc(userRef);
+
+            if (userSnap.exists()) {
+                throw new Error('Этот логин уже занят другим пользователем!');
+            }
+
+            // Создаем аккаунт
+            const userCredential = await createUserWithEmailAndPassword(auth, fakeEmail, password);
+            const uid = userCredential.user.uid;
+
+            // Записываем данные пользователя в Firestore
+            await setDoc(doc(db, 'users', uid), {
+                uid: uid,
+                username: rawLogin,
+                createdAt: Date.now()
+            });
+
+            // Резервируем имя пользователя
+            await setDoc(userRef, {
+                uid: uid
+            });
+        }
+    } catch (error) {
+        console.error('Ошибка авторизации:', error);
+        alert(error.message || 'Произошла ошибка при авторизации.');
+    } finally {
+        authSubmitBtn.disabled = false;
+        authSubmitBtn.textContent = activeTab === 'login' ? 'Войти' : 'Зарегистрироваться';
+    }
+}
+
+// Слушатель состояния авторизации
+onAuthStateChanged(auth, async (firebaseUser) => {
+    if (firebaseUser) {
+        // Пользователь вошел
+        const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+        if (userSnap.exists()) {
+            currentUser = userSnap.data();
+            myProfileName.textContent = currentUser.username;
+            
+            // Показываем мессенджер
+            authContainer.classList.add('hidden');
+            appContainer.classList.add('active');
+
+            // Запускаем real-time подписки
+            startListeningRequestsAndFriends();
+        } else {
+            // Если профиль в БД не найден, вылогиниваем
+            signOut(auth);
+        }
+    } else {
+        // Выход из аккаунта
+        currentUser = null;
+        stopAllSubscriptions();
+        
+        // Сбрасываем UI
+        authContainer.classList.remove('hidden');
+        appContainer.classList.remove('active');
+        authLoginInput.value = '';
+        authPasswordInput.value = '';
+        document.getElementById('searchResults').innerHTML = '';
+        document.getElementById('friendRequestsList').innerHTML = '';
+        document.getElementById('chatList').innerHTML = '';
+        closeChat();
+    }
+});
+
+// Кнопка выхода
+logoutBtn.addEventListener('click', () => {
+    if (confirm('Вы уверены, что хотите выйти?')) {
+        signOut(auth);
+    }
+});
+
+function stopAllSubscriptions() {
+    if (unsubscribeMessages) unsubscribeMessages();
+    if (unsubscribeFriends) unsubscribeFriends();
+    if (unsubscribeRequests) unsubscribeRequests();
+}
+
+/* === ПОИСК ПОЛЬЗОВАТЕЛЕЙ И ОТПРАВКА ЗАЯВОК === */
+const userSearchInput = document.getElementById('userSearchInput');
+const searchResults = document.getElementById('searchResults');
+
+let searchTimeout = null;
+userSearchInput.addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(searchUsers, 500);
+});
+
+async function searchUsers() {
+    const queryStr = userSearchInput.value.trim().toLowerCase();
+    if (!queryStr) {
+        searchResults.innerHTML = '';
+        return;
+    }
+
+    if (queryStr === currentUser.username) {
+        searchResults.innerHTML = '<div style="font-size:12px; color:var(--text-muted); text-align:center; padding:5px;">Это ваш логин</div>';
+        return;
+    }
+
+    try {
+        // Ищем пользователя с точным совпадением (или в диапазоне)
+        const q = query(
+            collection(db, 'users'), 
+            where('username', '>=', queryStr), 
+            where('username', '<=', queryStr + '\uf8ff'),
+            limit(5)
+        );
+        const querySnapshot = await getDocs(q);
+
+        searchResults.innerHTML = '';
+        let foundAny = false;
+
+        querySnapshot.forEach((docSnap) => {
+            const foundUser = docSnap.data();
+            if (foundUser.uid === currentUser.uid) return;
+
+            foundAny = true;
+            renderFoundUser(foundUser);
         });
-    });
+
+        if (!foundAny) {
+            searchResults.innerHTML = '<div style="font-size:12px; color:var(--text-muted); text-align:center; padding:5px;">Пользователь не найден</div>';
+        }
+    } catch (e) {
+        console.error("Ошибка поиска:", e);
+    }
+}
+
+async function renderFoundUser(user) {
+    const div = document.createElement('div');
+    div.className = 'found-user-item';
+    div.innerHTML = `
+        <span>@${user.username}</span>
+        <button class="friend-req-btn" id="btn-req-${user.uid}">Загрузка...</button>
+    `;
+    searchResults.appendChild(div);
+
+    const btn = document.getElementById(`btn-req-${user.uid}`);
+
+    // Проверяем статус отношений в реальном времени
+    // Сначала ищем исходящий запрос
+    const outQ = query(collection(db, 'friend_requests'), where('senderUid', '==', currentUser.uid), where('receiverUid', '==', user.uid));
+    // Входящий запрос
+    const inQ = query(collection(db, 'friend_requests'), where('senderUid', '==', user.uid), where('receiverUid', '==', currentUser.uid));
     
-    // Инпут
-    const msgInp = document.getElementById('messageInput');
-    msgInp.addEventListener('input', () => {
-        document.getElementById('micBtn').style.display = msgInp.value.trim() ? 'none' : 'flex';
-        document.getElementById('sendBtn').style.display = msgInp.value.trim() ? 'flex' : 'none';
+    const [outSnap, inSnap] = await Promise.all([getDocs(outQ), getDocs(inQ)]);
+
+    let status = 'none'; // 'none' | 'pending_out' | 'pending_in' | 'accepted'
+    let reqDocId = null;
+
+    if (!outSnap.empty) {
+        const req = outSnap.docs[0].data();
+        status = req.status === 'accepted' ? 'accepted' : 'pending_out';
+        reqDocId = outSnap.docs[0].id;
+    } else if (!inSnap.empty) {
+        const req = inSnap.docs[0].data();
+        status = req.status === 'accepted' ? 'accepted' : 'pending_in';
+        reqDocId = inSnap.docs[0].id;
+    }
+
+    if (status === 'accepted') {
+        btn.textContent = 'Друзья';
+        btn.classList.add('pending');
+        btn.disabled = true;
+    } else if (status === 'pending_out') {
+        btn.textContent = 'Отправлено';
+        btn.classList.add('pending');
+        btn.disabled = true;
+    } else if (status === 'pending_in') {
+        btn.textContent = 'Принять';
+        btn.onclick = async () => {
+            btn.disabled = true;
+            await updateDoc(doc(db, 'friend_requests', reqDocId), { status: 'accepted' });
+            searchUsers();
+        };
+    } else {
+        btn.textContent = 'Добавить';
+        btn.onclick = async () => {
+            btn.disabled = true;
+            btn.textContent = 'Отправка...';
+            await addDoc(collection(db, 'friend_requests'), {
+                senderUid: currentUser.uid,
+                senderUsername: currentUser.username,
+                receiverUid: user.uid,
+                receiverUsername: user.username,
+                status: 'pending',
+                createdAt: Date.now()
+            });
+            searchUsers();
+        };
+    }
+}
+
+/* === РЕАЛ-ТАЙМ СЛУШАТЕЛИ ЗАЯВОК И ДРУЗЕЙ === */
+const friendRequestsTitle = document.getElementById('friendRequestsTitle');
+const friendRequestsList = document.getElementById('friendRequestsList');
+const chatList = document.getElementById('chatList');
+
+function startListeningRequestsAndFriends() {
+    // 1. Слушаем входящие заявки в друзья (status: 'pending' и receiverUid == currentUser.uid)
+    const requestsQuery = query(
+        collection(db, 'friend_requests'),
+        where('receiverUid', '==', currentUser.uid),
+        where('status', '==', 'pending')
+    );
+
+    unsubscribeRequests = onSnapshot(requestsQuery, (snapshot) => {
+        friendRequestsList.innerHTML = '';
+        if (snapshot.empty) {
+            friendRequestsTitle.style.display = 'none';
+        } else {
+            friendRequestsTitle.style.display = 'block';
+            snapshot.forEach((docSnap) => {
+                const req = docSnap.data();
+                const reqId = docSnap.id;
+                
+                const div = document.createElement('div');
+                div.className = 'friend-req-item';
+                div.innerHTML = `
+                    <span>@${req.senderUsername}</span>
+                    <div class="req-actions">
+                        <button class="req-btn accept" id="accept-${reqId}">Да</button>
+                        <button class="req-btn reject" id="reject-${reqId}">Нет</button>
+                    </div>
+                `;
+                friendRequestsList.appendChild(div);
+
+                document.getElementById(`accept-${reqId}`).onclick = () => acceptFriendRequest(reqId);
+                document.getElementById(`reject-${reqId}`).onclick = () => rejectFriendRequest(reqId);
+            });
+        }
+    });
+
+    // 2. Слушаем список друзей (все заявки, где status == 'accepted' и мы являемся либо отправителем, либо получателем)
+    const friendsQuery = query(
+        collection(db, 'friend_requests'),
+        where('status', '==', 'accepted')
+    );
+
+    unsubscribeFriends = onSnapshot(friendsQuery, async (snapshot) => {
+        const friendsMap = new Map();
+
+        for (const docSnap of snapshot.docs) {
+            const data = docSnap.data();
+            if (data.senderUid === currentUser.uid) {
+                friendsMap.set(data.receiverUid, { uid: data.receiverUid, username: data.receiverUsername });
+            } else if (data.receiverUid === currentUser.uid) {
+                friendsMap.set(data.senderUid, { uid: data.senderUid, username: data.senderUsername });
+            }
+        }
+
+        renderFriendsList(Array.from(friendsMap.values()));
     });
 }
 
-function renderChats() {
-    const list = document.getElementById('chatList');
-    list.innerHTML = '';
-    chats.forEach(chat => {
+async function acceptFriendRequest(reqId) {
+    await updateDoc(doc(db, 'friend_requests', reqId), { status: 'accepted' });
+}
+
+async function rejectFriendRequest(reqId) {
+    await deleteDoc(doc(db, 'friend_requests', reqId));
+}
+
+function renderFriendsList(friends) {
+    chatList.innerHTML = '';
+    if (friends.length === 0) {
+        chatList.innerHTML = '<div style="color:var(--text-muted); font-size:13px; text-align:center; padding:20px;">У вас пока нет друзей. Найдите их по логину выше!</div>';
+        return;
+    }
+
+    friends.forEach(friend => {
+        const color = getUserColor(friend.uid);
+        const avatarStr = friend.username.charAt(0).toUpperCase();
+
         const div = document.createElement('div');
-        div.className = `chat-item ${chat.id === currentChatId ? 'active' : ''}`;
-        div.onclick = () => selectChat(chat.id);
+        div.className = `chat-item ${currentChatFriend && currentChatFriend.uid === friend.uid ? 'active' : ''}`;
+        div.onclick = () => selectFriendChat(friend);
         div.innerHTML = `
             <div class="avatar-container">
-                <div class="avatar" style="background:${chat.color}">${chat.avatarStr}</div>
-                <div class="online-dot ${chat.online ? 'active' : ''}"></div>
+                <div class="avatar" style="background:${color}">${avatarStr}</div>
+                <div class="online-dot active"></div>
             </div>
             <div class="chat-info">
                 <div class="chat-row-1">
-                    <div class="chat-name">${chat.name} ${chat.pinned ? '<svg class="pinned-icon"><use href="#icon-pin"></use></svg>' : ''}</div>
-                    <div class="chat-time">${chat.time}</div>
+                    <div class="chat-name">${friend.username}</div>
+                    <div class="chat-time"></div>
                 </div>
                 <div class="chat-row-2">
-                    <div class="chat-last-msg">${chat.lastMsg}</div>
-                    ${chat.unread > 0 ? `<div class="unread-badge">${chat.unread}</div>` : ''}
+                    <div class="chat-last-msg" id="last-msg-${friend.uid}">Нажмите для общения</div>
                 </div>
             </div>
         `;
-        list.appendChild(div);
+        chatList.appendChild(div);
+
+        // Получаем последнее сообщение для этого друга
+        listenLastMessage(friend.uid);
     });
 }
 
-function selectChat(id) {
-    currentChatId = id;
-    const chat = chats.find(c => c.id === id);
-    
-    // Обновляем шапку
-    document.getElementById('activeName').textContent = chat.name;
-    document.getElementById('activeStatus').textContent = chat.online ? 'в сети' : 'был(а) недавно';
-    const av = document.getElementById('activeAvatar');
-    av.textContent = chat.avatarStr;
-    av.style.background = chat.color;
-    document.getElementById('activeOnline').className = `online-dot ${chat.online ? 'active' : ''}`;
-    
-    // Обновляем инфо панель
-    document.getElementById('infoName').textContent = chat.name;
-    document.getElementById('infoStatus').textContent = chat.online ? 'в сети' : 'был(а) недавно';
-    const infAv = document.getElementById('infoAvatar');
-    infAv.textContent = chat.avatarStr;
-    infAv.style.background = chat.color;
+function listenLastMessage(friendUid) {
+    // В реальном чате можно сделать быстрый запрос на последнее сообщение
+    // Для экономии ресурсов и простоты мы оставим стандартную заглушку или обновим ее при получении сообщений
+}
 
-    // Рендер активных классов в списке
+/* === ВЫБОР ДИАЛОГА И СИСТЕМА СООБЩЕНИЙ === */
+const noChatSelectedScreen = document.getElementById('noChatSelectedScreen');
+const chatHeader = document.getElementById('chatHeader');
+const messagesArea = document.getElementById('messagesArea');
+const chatInputArea = document.getElementById('chatInputArea');
+
+const activeName = document.getElementById('activeName');
+const activeAvatar = document.getElementById('activeAvatar');
+const activeStatus = document.getElementById('activeStatus');
+
+const messageInput = document.getElementById('messageInput');
+const sendBtn = document.getElementById('sendBtn');
+const micBtn = document.getElementById('micBtn');
+
+function closeChat() {
+    currentChatFriend = null;
+    noChatSelectedScreen.style.display = 'flex';
+    chatHeader.style.display = 'none';
+    messagesArea.style.display = 'none';
+    chatInputArea.style.display = 'none';
+    if (unsubscribeMessages) unsubscribeMessages();
+}
+
+function selectFriendChat(friend) {
+    currentChatFriend = friend;
+
+    // Скрываем заглушку и показываем чат
+    noChatSelectedScreen.style.display = 'none';
+    chatHeader.style.display = 'flex';
+    messagesArea.style.display = 'flex';
+    chatInputArea.style.display = 'flex';
+
+    // Заполняем шапку чата
+    activeName.textContent = `@${friend.username}`;
+    activeAvatar.textContent = friend.username.charAt(0).toUpperCase();
+    activeAvatar.style.background = getUserColor(friend.uid);
+    activeStatus.textContent = 'в сети';
+
+    // Обновляем активный класс в списке друзей
     document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
-    const activeItem = Array.from(document.querySelectorAll('.chat-item')).find(el => el.querySelector('.chat-name').textContent.includes(chat.name.split(' ')[0]));
-    if(activeItem) activeItem.classList.add('active');
+    
+    // Подписываемся на сообщения
+    listenToMessages();
 
-    // Мобильный вид - скрываем сайдбар при выборе чата
-    if(window.innerWidth <= 768) {
+    // Мобильный вид - скрываем сайдбар
+    if (window.innerWidth <= 768) {
         document.getElementById('sidebar').classList.add('hidden-mobile');
     }
-
-    renderMessages(id);
 }
 
-function renderMessages(chatId) {
-    const area = document.getElementById('messagesArea');
-    const typingIndicator = document.getElementById('typingIndicator');
-    area.innerHTML = '';
-    
-    // Если это первый чат, загружаем наши сгенерированные 200 сообщений
-    const messagesToRender = chatId === 'c1' ? generatedHistory : [
-        { type: 'date', text: 'Сегодня' },
-        { type: 'msg', text: chats.find(c=>c.id===chatId).lastMsg, out: false, time: '10:00', read: true }
-    ];
+// Слушатель инпута ввода
+messageInput.addEventListener('input', () => {
+    autoExpand(messageInput);
+    micBtn.style.display = messageInput.value.trim() ? 'none' : 'flex';
+    sendBtn.style.display = messageInput.value.trim() ? 'flex' : 'none';
+});
 
-    messagesToRender.forEach(msg => {
-        if(msg.type === 'date') {
-            const div = document.createElement('div');
-            div.className = 'date-divider';
-            div.innerHTML = `<span>${msg.text}</span>`;
-            area.appendChild(div);
-        } else {
-            appendMessageNode(msg.text, msg.out, msg.time, msg.read);
-        }
-    });
-    
-    area.appendChild(typingIndicator); // Переносим индикатор в конец
-    scrollToBottom();
-}
+messageInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
 
-function appendMessageNode(text, isOut, time, isRead = false) {
-    const area = document.getElementById('messagesArea');
-    const typingIndicator = document.getElementById('typingIndicator');
-    const div = document.createElement('div');
-    div.className = `message ${isOut ? 'msg-out' : 'msg-in'}`;
-    
-    let statusSvg = isRead ? '<use href="#icon-check-double"></use>' : '<use href="#icon-check-double"></use>'; // Упрощено для демо
-    
-    div.innerHTML = `
-        <div class="msg-bubble">
-            ${text}
-            <div class="msg-meta">
-                <span>${time}</span>
-                ${isOut ? `<span class="msg-status"><svg>${statusSvg}</svg></span>` : ''}
-            </div>
-        </div>
-    `;
-    area.insertBefore(div, typingIndicator);
-}
-
-/* === ВЗАИМОДЕЙСТВИЯ И АНИМАЦИИ === */
+sendBtn.addEventListener('click', sendMessage);
 
 function autoExpand(field) {
     field.style.height = 'inherit';
     field.style.height = (field.scrollHeight) + 'px';
 }
 
-function handleEnter(e) {
-    if(e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
+async function sendMessage() {
+    const text = messageInput.value.trim();
+    if (!text || !currentChatFriend) return;
+
+    try {
+        await addDoc(collection(db, 'messages'), {
+            senderUid: currentUser.uid,
+            receiverUid: currentChatFriend.uid,
+            text: text,
+            createdAt: Date.now()
+        });
+
+        messageInput.value = '';
+        messageInput.style.height = 'inherit';
+        micBtn.style.display = 'flex';
+        sendBtn.style.display = 'none';
+    } catch (e) {
+        console.error("Ошибка отправки сообщения:", e);
     }
 }
 
-// Улучшенный индикатор набора текста (Универсальная синхронизация mobile/desktop UI)
-// Разработано с учетом проблемы рассинхрона видимости индикатора на разных платформах.
-function setTypingStatus(isTyping) {
-    const statusEl = document.getElementById('activeStatus');
-    const indicator = document.getElementById('typingIndicator');
-    const chat = chats.find(c => c.id === currentChatId);
-    
-    if(isTyping) {
-        statusEl.textContent = 'печатает...';
-        statusEl.classList.add('typing');
-        indicator.classList.add('active');
+function listenToMessages() {
+    if (unsubscribeMessages) unsubscribeMessages();
+
+    // Запрос на получение всех сообщений между двумя пользователями
+    const q = query(
+        collection(db, 'messages'),
+        orderBy('createdAt', 'asc')
+    );
+
+    unsubscribeMessages = onSnapshot(q, (snapshot) => {
+        messagesArea.innerHTML = '';
+        let lastDateString = '';
+
+        snapshot.forEach((docSnap) => {
+            const msg = docSnap.data();
+            
+            // Фильтруем сообщения только для текущей пары пользователей
+            const isMyMessage = msg.senderUid === currentUser.uid && msg.receiverUid === currentChatFriend.uid;
+            const isFriendMessage = msg.senderUid === currentChatFriend.uid && msg.receiverUid === currentUser.uid;
+
+            if (isMyMessage || isFriendMessage) {
+                const date = new Date(msg.createdAt);
+                const dateString = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+
+                // Добавляем разделитель даты
+                if (dateString !== lastDateString) {
+                    const divider = document.createElement('div');
+                    divider.className = 'date-divider';
+                    divider.innerHTML = `<span>${dateString}</span>`;
+                    messagesArea.appendChild(divider);
+                    lastDateString = dateString;
+                }
+
+                // Рендерим сообщение
+                const timeString = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                appendMessageNode(msg.text, isMyMessage, timeString);
+            }
+        });
+
+        // Добавляем индикатор печатания обратно
+        const typingIndicator = document.getElementById('typingIndicator');
+        messagesArea.appendChild(typingIndicator);
+        
         scrollToBottom();
-    } else {
-        statusEl.textContent = chat.online ? 'в сети' : 'был(а) недавно';
-        statusEl.classList.remove('typing');
-        indicator.classList.remove('active');
-    }
+    });
 }
 
-function sendMessage() {
-    const inp = document.getElementById('messageInput');
-    const text = inp.value.trim();
-    if(!text) return;
-
-    const now = new Date();
-    const timeStr = `${now.getHours()}:${now.getMinutes() < 10 ? '0' : ''}${now.getMinutes()}`;
+function appendMessageNode(text, isOut, time) {
+    const div = document.createElement('div');
+    div.className = `message ${isOut ? 'msg-out' : 'msg-in'}`;
     
-    appendMessageNode(text, true, timeStr, false);
-    inp.value = '';
-    inp.style.height = 'inherit';
-    document.getElementById('micBtn').style.display = 'flex';
-    document.getElementById('sendBtn').style.display = 'none';
-    scrollToBottom();
-
-    // Обновляем список чатов
-    const chat = chats.find(c => c.id === currentChatId);
-    chat.lastMsg = text;
-    renderChats();
-
-    // Имитация ответа собеседника
-    setTimeout(() => {
-        setTypingStatus(true);
-        setTimeout(() => {
-            setTypingStatus(false);
-            appendMessageNode("Звучит круто! Посмотрю позже. 🔥", false, timeStr, true);
-            chat.lastMsg = "Звучит круто! Посмотрю позже. 🔥";
-            renderChats();
-            scrollToBottom();
-        }, 2500);
-    }, 1000);
+    div.innerHTML = `
+        <div class="msg-bubble">
+            ${text}
+            <div class="msg-meta">
+                <span>${time}</span>
+                ${isOut ? `<span class="msg-status"><svg><use href="#icon-check-double"></use></svg></span>` : ''}
+            </div>
+        </div>
+    `;
+    const typingIndicator = document.getElementById('typingIndicator');
+    messagesArea.insertBefore(div, typingIndicator);
 }
 
 function scrollToBottom() {
-    const area = document.getElementById('messagesArea');
-    area.scrollTop = area.scrollHeight;
+    messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
-/* === UI ПЕРЕКЛЮЧАТЕЛИ === */
+/* === UI ПЕРЕКЛЮЧАТЕЛИ И ЗВОНКИ === */
+const themeToggleBtn = document.getElementById('themeToggleBtn');
+const themeToggleBtn2 = document.getElementById('themeToggleBtn2');
+const backBtnMobile = document.getElementById('backBtnMobile');
+
+themeToggleBtn.addEventListener('click', toggleTheme);
+themeToggleBtn2.addEventListener('click', toggleTheme);
+
 function toggleTheme() {
     const html = document.documentElement;
     if(html.getAttribute('data-theme') === 'dark') {
@@ -269,59 +591,79 @@ function toggleTheme() {
     }
 }
 
-function toggleInfoPanel(e) {
-    if(e) e.stopPropagation();
-    const panel = document.getElementById('infoPanel');
-    panel.classList.toggle('open');
-}
-
-function toggleSidebar(e) {
-    if(e) e.stopPropagation();
+backBtnMobile.addEventListener('click', () => {
     document.getElementById('sidebar').classList.remove('hidden-mobile');
-}
+});
 
-/* === СИСТЕМА ЗВОНКОВ === */
+// Кнопка информации о чате
+const infoToggleBtn = document.getElementById('infoToggleBtn');
+infoToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const panel = document.getElementById('infoPanel');
+    
+    // Обновляем панель информации
+    if (currentChatFriend) {
+        document.getElementById('infoName').textContent = `@${currentChatFriend.username}`;
+        document.getElementById('infoAvatar').textContent = currentChatFriend.username.charAt(0).toUpperCase();
+        document.getElementById('infoAvatar').style.background = getUserColor(currentChatFriend.uid);
+        document.getElementById('infoStatus').textContent = 'В сети';
+    }
+    
+    panel.classList.toggle('open');
+});
+
+/* === СИСТЕМА ЗВОНКОВ (КРАСИВАЯ АНИМАЦИЯ ДЛЯ ТЕСТА) === */
+const callModal = document.getElementById('callModal');
+const callVoiceBtn = document.getElementById('callVoiceBtn');
+const callVideoBtn = document.getElementById('callVideoBtn');
+const callRejectBtn = document.getElementById('callRejectBtn');
+const callAcceptBtn = document.getElementById('callAcceptBtn');
+const videoCallFS = document.getElementById('videoCallFS');
+const videoCallEndBtn = document.getElementById('videoCallEndBtn');
+
+callVoiceBtn.addEventListener('click', () => startCall('voice'));
+callVideoBtn.addEventListener('click', () => startCall('video'));
+callRejectBtn.addEventListener('click', endCall);
+callAcceptBtn.addEventListener('click', acceptCall);
+videoCallEndBtn.addEventListener('click', endCall);
+
 let currentCallType = '';
 
-function startCall(type, e) {
-    e.stopPropagation();
-    const chat = chats.find(c => c.id === currentChatId);
+function startCall(type) {
+    if (!currentChatFriend) return;
     currentCallType = type;
     
     document.getElementById('callTypeText').textContent = type === 'video' ? 'Исходящий видеозвонок' : 'Исходящий аудиозвонок';
-    document.getElementById('callName').textContent = chat.name;
+    document.getElementById('callName').textContent = `@${currentChatFriend.username}`;
     document.getElementById('callStatus').textContent = 'Гудки...';
     
     const av = document.getElementById('callAvatar');
-    av.textContent = chat.avatarStr;
-    av.style.background = chat.color;
+    av.textContent = currentChatFriend.username.charAt(0).toUpperCase();
+    av.style.background = getUserColor(currentChatFriend.uid);
     
-    document.getElementById('incomingControls').innerHTML = `
-        <button class="call-btn btn-reject" onclick="endCall()"><svg style="width:28px;height:28px;fill:none;"><use href="#icon-x"></use></svg></button>
-    `;
+    callModal.classList.add('active');
 
-    document.getElementById('callModal').classList.add('active');
-
-    // Имитация ответа через 3 секунды
+    // Симуляция ответа друга
     setTimeout(() => {
-        if(!document.getElementById('callModal').classList.contains('active')) return;
+        if(!callModal.classList.contains('active')) return;
         if(type === 'video') {
             acceptVideoCall();
         } else {
-            document.getElementById('callStatus').textContent = '00:01';
+            document.getElementById('callStatus').textContent = 'Разговор: 00:01';
         }
     }, 3000);
 }
 
 function acceptVideoCall() {
-    document.getElementById('callModal').classList.remove('active');
-    document.getElementById('videoCallFS').classList.add('active');
+    callModal.classList.remove('active');
+    videoCallFS.classList.add('active');
+}
+
+function acceptCall() {
+    document.getElementById('callStatus').textContent = 'Разговор: 00:01';
 }
 
 function endCall() {
-    document.getElementById('callModal').classList.remove('active');
-    document.getElementById('videoCallFS').classList.remove('active');
+    callModal.classList.remove('active');
+    videoCallFS.classList.remove('active');
 }
-
-// Запуск
-window.onload = init;
