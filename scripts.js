@@ -272,7 +272,12 @@ onAuthStateChanged(auth, async (firebaseUser) => {
             }
         } catch (err) {
             console.error("Ошибка проверки профиля:", err);
-            showNotification('Ошибка связи с базой данных.', 'error');
+            showNotification(getAuthErrorMessage(err), 'error');
+            authSubmitBtn.disabled = false;
+            authSubmitBtn.textContent = activeTab === 'login' ? 'Войти' : 'Зарегистрироваться';
+            if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+                await signOut(auth);
+            }
         }
     } else {
         currentUser = null;
@@ -345,7 +350,10 @@ setupUsernameBtn.addEventListener('click', async () => {
 
     } catch (error) {
         console.error('Ошибка сохранения логина:', error);
-        showNotification(error.message.includes('занят') ? error.message : 'Ошибка при сохранении логина.', 'error');
+        showNotification(
+            error.message?.includes('занят') ? error.message : getAuthErrorMessage(error),
+            'error'
+        );
     } finally {
         setupUsernameBtn.disabled = false;
         setupUsernameBtn.textContent = 'Сохранить и войти';
