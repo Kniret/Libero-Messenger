@@ -182,7 +182,27 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js')
-        .then(reg => console.log('Service Worker успешно зарегистрирован!', reg))
+        .then(reg => {
+          console.log('Service Worker успешно зарегистрирован!', reg);
+          // Принудительно проверяем обновление при каждой загрузке страницы
+          reg.update();
+          
+          // Слушатель на случай, если найден новый Service Worker
+          reg.onupdatefound = () => {
+            const installingWorker = reg.installing;
+            installingWorker.onstatechange = () => {
+              if (installingWorker.state === 'installed') {
+                if (navigator.serviceWorker.controller) {
+                  console.log('Доступно новое обновление! Пожалуйста, обновите страницу.');
+                  // Мягко уведомляем пользователя о новой версии
+                  if (confirm('Доступно новое обновление мессенджера! Перезагрузить страницу для обновления?')) {
+                    window.location.reload();
+                  }
+                }
+              }
+            };
+          };
+        })
         .catch(err => console.error('Ошибка регистрации SW:', err));
     });
   }

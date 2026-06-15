@@ -151,6 +151,9 @@ onAuthStateChanged(auth, async (firebaseUser) => {
             authContainer.classList.add('hidden');
             appContainer.classList.add('active');
 
+            // Сбрасываем активный диалог до выбора пользователя
+            closeChat();
+
             // Запускаем real-time подписки
             startListeningRequestsAndFriends();
         } else {
