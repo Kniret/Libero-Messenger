@@ -30,6 +30,7 @@ let unsubscribeMessages = null;
 let unsubscribeFriends = null;
 let unsubscribeRequests = null;
 let userColorsCache = {};
+let isRegistering = false; // <-- ДОБАВЬ ЭТУ СТРОКУ
 
 // Предопределенные цвета аватаров
 const avatarsBg = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#0ea5e9", "#6366f1", "#a855f7", "#ec4899"];
@@ -252,7 +253,9 @@ async function handleAuthSubmit() {
         if (activeTab === 'login') {
             // Вход
             await signInWithEmailAndPassword(auth, fakeEmail, password);
-        } else {
+       } else {
+            isRegistering = true; // Блокируем onAuthStateChanged
+            
             const userCredential = await createUserWithEmailAndPassword(auth, fakeEmail, password);
             const uid = userCredential.user.uid;
 
@@ -271,9 +274,15 @@ async function handleAuthSubmit() {
                 });
 
                 await setDoc(userRef, { uid: uid });
+                
+                // Вручную инициализируем UI, так как документы успешно созданы
+                await loadUserProfileAndStart(userCredential.user);
+                
             } catch (regError) {
                 await signOut(auth);
                 throw regError;
+            } finally {
+                isRegistering = false; // Снимаем блокировку
             }
         }
     } catch (error) {
@@ -285,28 +294,35 @@ async function handleAuthSubmit() {
     }
 }
 
+// Функция для загрузки профиля и инициализации интерфейса
+async function loadUserProfileAndStart(firebaseUser) {
+    const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+    if (userSnap.exists()) {
+        currentUser = userSnap.data();
+        myProfileName.textContent = currentUser.username;
+        
+        // Показываем мессенджер
+        authContainer.classList.add('hidden');
+        appContainer.classList.add('active');
+
+        // Сбрасываем активный диалог до выбора пользователя
+        closeChat();
+
+        // Запускаем real-time подписки
+        startListeningRequestsAndFriends();
+    } else {
+        // Если профиля действительно нет, выходим
+        signOut(auth);
+    }
+}
+// Слушатель состояния авторизации
 // Слушатель состояния авторизации
 onAuthStateChanged(auth, async (firebaseUser) => {
     if (firebaseUser) {
-        // Пользователь вошел
-        const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (userSnap.exists()) {
-            currentUser = userSnap.data();
-            myProfileName.textContent = currentUser.username;
-            
-            // Показываем мессенджер
-            authContainer.classList.add('hidden');
-            appContainer.classList.add('active');
-
-            // Сбрасываем активный диалог до выбора пользователя
-            closeChat();
-
-            // Запускаем real-time подписки
-            startListeningRequestsAndFriends();
-        } else {
-            // Если профиль в БД не найден, вылогиниваем
-            signOut(auth);
-        }
+        // Игнорируем фоновый вызов, если мы прямо сейчас создаем аккаунт
+        if (isRegistering) return; 
+        
+        await loadUserProfileAndStart(firebaseUser);
     } else {
         // Выход из аккаунта
         currentUser = null;
