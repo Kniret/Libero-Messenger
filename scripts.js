@@ -517,7 +517,14 @@ async function setOnlineStatus(isOnline) {
 // Отслеживаем активность вкладки
 window.addEventListener('focus', () => setOnlineStatus(true));
 window.addEventListener('blur', () => setOnlineStatus(false));
-window.addEventListener('beforeunload', () => setOnlineStatus(false));
+window.addEventListener('beforeunload', () => {
+    if (currentUser) {
+        updateDoc(doc(db, "users", currentUser.uid), {
+            online: false,
+            lastSeen: new Date()
+        });
+    }
+});
 
 /* === РЕАЛ-ТАЙМ СЛУШАТЕЛИ ЗАЯВОК И ДРУЗЕЙ === */
 const friendRequestsTitle = document.getElementById('friendRequestsTitle');
