@@ -275,6 +275,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
 
                 closeChat();
                 startListeningRequestsAndFriends();
+                startGlobalNotificationListener()
                 setOnlineStatus(true);
             } else {
                 // Новый юзер: прячем вход, включаем шаг 2
@@ -1057,4 +1058,51 @@ function acceptCall() {
 function endCall() {
     callModal.classList.remove('active');
     videoCallFS.classList.remove('active');
+}
+
+// Функция отправки системного Push-уведомления
+function sendPushNotification(title, body) {
+    if ("Notification" in window && Notification.permission === "granted") {
+        navigator.serviceWorker.ready.then(reg => {
+            reg.showNotification(title, {
+                body: body,
+                icon: 'https://cdn-icons-png.flaticon.com/512/1041/1041916.png',
+                vibrate: [200, 100, 200],
+                tag: 'libero-msg' // Заменяет старое уведомление новым, чтобы не спамить
+            });
+        });
+    }
+}
+
+// Глобальный слушатель новых сообщений (Добавьте его вызов внутрь onAuthStateChanged, когда пользователь авторизован)
+function startGlobalNotificationListener() {
+    // Запрашиваем права на уведомления
+    if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
+        Notification.requestPermission();
+    }
+
+    const unreadQuery = query(
+        collection(db, 'messages'),
+        where('receiverUid', '==', currentUser.uid),
+        where('isRead', '==', false)
+    );
+
+    onSnapshot(unreadQuery, (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === 'added') {
+                const msg = change.doc.data();
+                
+                // Проверяем: если вкладка свернута ИЛИ открыт другой чат -> шлем уведомление
+                const isTabHidden = document.visibilityState === 'hidden';
+                const isDifferentChat = !currentChatFriend || currentChatFriend.uid !== msg.senderUid;
+
+                if (isTabHidden || isDifferentChat) {
+                    const textStr = msg.type === 'image' ? '📸 Отправил(а) фото' : msg.text;
+                    // Имя отправителя можно вытащить, сделав доп. запрос, 
+                    // или просто написать "Новое сообщение"
+                    sendPushNotification('Новое сообщение в Libero', textStr);
+                }
+            }
+        });
+    });
 }
