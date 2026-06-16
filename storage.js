@@ -1,13 +1,19 @@
-// js/storage.js
 import { supabase } from './supabase.js';
 
-export const uploadEncryptedFile = async (file, path) => {
-    // 1. Шифрование происходит ДО этого вызова (через Web Crypto)
-    // 2. Отправляем в Supabase
+export const uploadMedia = async (encryptedBlob, path) => {
     const { data, error } = await supabase.storage
-        .from('chat-files') // Имя вашего бакета
-        .upload(path, file);
+        .from('chat-files')
+        .upload(path, encryptedBlob, { contentType: 'application/octet-stream' });
 
     if (error) throw error;
-    return data;
+    return data.path;
+};
+
+export const downloadMedia = async (path) => {
+    const { data, error } = await supabase.storage
+        .from('chat-files')
+        .download(path);
+
+    if (error) throw error;
+    return await data.arrayBuffer();
 };

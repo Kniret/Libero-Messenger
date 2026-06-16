@@ -38,15 +38,21 @@ self.addEventListener('activate', (e) => {
 // Это идеальное решение для GitHub Pages, чтобы пользователи сразу получали свежие обновления,
 // а при отсутствии сети мессенджер продолжал открываться из кэша.
 self.addEventListener('fetch', (e) => {
-  // Игнорируем запросы, отличные от GET (например, запросы к Firebase/Supabase API)
   if (e.request.method !== 'GET') {
     return;
   }
 
+  // РЕШЕНИЕ ПРОБЛЕМЫ ДВОЙНОГО КЭШИРОВАНИЯ:
+  // Если запрос идет к нашему домену (локальные ресурсы) и это не навигация по страницам,
+  // создаем новый запрос с флагом cache: 'no-cache', чтобы принудительно лететь на сервер мимо HTTP-кэша.
+  let requestToFetch = e.request;
+  if (e.request.url.includes(self.location.origin) && e.request.mode !== 'navigate') {
+    requestToFetch = new Request(e.request, { cache: 'no-cache' });
+  }
+
   e.respondWith(
-    fetch(e.request)
+    fetch(requestToFetch)
       .then((response) => {
-        // Если ответ успешный, сохраняем его копию в кэш
         if (response && response.status === 200 && response.type === 'basic') {
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -55,9 +61,38 @@ self.addEventListener('fetch', (e) => {
         }
         return response;
       })
-      .catch(() => {
-        // Если сети нет, возвращаем ресурс из кэша
-        return caches.match(e.request);
-      })
+      .catch(() => caches.match(e.request)) // Если интернета нет — берем из SW-кэша
+  );
+});
+
+// Обработка клика по уведомлению
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close(); // Закрываем уведомление
+
+  const data = event.notification.data;
+  const senderUid = data ? data.senderUid : null;
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // Ищем уже открытую (но свернутую) вкладку мессенджера
+      for (let client of windowClients) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          client.focus(); // Разворачиваем окно
+          if (senderUid) {
+            // Отправляем команду в scripts.js
+            client.postMessage({ type: 'OPEN_CHAT', senderUid: senderUid });
+          }
+          return;
+        }
+      }
+      
+      // Если вкладка вообще закрыта, открываем новую
+      if (clients.openWindow) {
+        let url = self.location.origin + self.location.pathname;
+        // Можно передать параметр в URL, если потребуется обрабатывать холодный старт
+        // url += '?chat=' + senderUid; 
+        return clients.openWindow(url);
+      }
+    })
   );
 });

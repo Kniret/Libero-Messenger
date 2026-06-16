@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Libero Messenger</title>
+    <title>Libero</title>
     <link rel="stylesheet" href="./style.css">
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#6366f1">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1041/1041916.png">
     <script>
     (function () {
         function ensureContainer() {
@@ -154,8 +157,8 @@
             </div>
         </div>
 
-        <div class="chat-input-area" id="chatInputArea" style="display:none;">
-            <button class="action-btn"><svg><use href="#icon-attach"></use></svg></button>
+        <button class="action-btn" id="attachBtn"><svg><use href="#icon-attach"></use></svg></button>
+            <input type="file" id="mediaInput" accept="image/*" style="display: none;">
         <div class="input-wrapper">
             <textarea id="messageInput" placeholder="Написать сообщение..." rows="1"></textarea>
         </div>
@@ -233,20 +236,27 @@
         navigator.serviceWorker.register('./sw.js')
         .then(reg => {
           console.log('Service Worker успешно зарегистрирован!', reg);
+          
+          // Принудительно проверяем наличие обновлений на сервере при каждой загрузке
           reg.update();
           
           reg.onupdatefound = () => {
             const installingWorker = reg.installing;
             installingWorker.onstatechange = () => {
+              // Когда воркер установился, благодаря skipWaiting() он сразу активируется
               if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                console.log('Доступно новое обновление! Пожалуйста, обновите страницу.');
+                console.log('Доступно новое обновление ресурсов.');
+                
                 const showUpdateConfirm = () => {
                   if (typeof window.showCustomConfirm === 'function') {
                     window.showCustomConfirm(
                       'Обновление',
-                      'Приложение обновлено. Нажмите ОК для перезагрузки.',
-                      () => window.location.reload(),
-                      true // Этот параметр мы добавим в scripts.js для режима одной кнопки
+                      'Приложение обновлено. Нажмите ОК для перезагрузки и применения новой версии.',
+                      () => {
+                          // Перед перезагрузкой очистим старую историю состояний, если нужно
+                          window.location.reload();
+                      },
+                      true
                     );
                   } else {
                     setTimeout(showUpdateConfirm, 100);
@@ -258,6 +268,14 @@
           };
         })
         .catch(err => console.error('Ошибка регистрации SW:', err));
+    });
+
+    // Автоматический релоад при смене контроллера (гарантирует подхват нового кэша)
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
     });
   }
 </script>
