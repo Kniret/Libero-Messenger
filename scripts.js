@@ -1129,7 +1129,11 @@ function startGlobalNotificationListener() {
                     }
 
                     // Отправляем пуш, где Заголовок = Логин друга, а Тело = текст сообщения
-                    sendPushNotification(senderName, textStr);
+                    // Склеиваем логин и сообщение с переносом строки (\n)
+                    const pushBody = `${senderName}\n${textStr}`;
+
+                    // Отправляем пуш, где Заголовок = 'Libero', а Тело = наша склейка
+                    sendPushNotification('Libero', pushBody);
                 }
             }
         });
