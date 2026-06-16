@@ -321,6 +321,10 @@ ul { list-style: none; }
 .msg-bubble {
     padding: 12px 16px; border-radius: 20px; font-size: 15px; line-height: 1.4;
     box-shadow: 0 4px 15px rgba(0,0,0,0.1); position: relative;
+    /* Это заставит браузер учитывать переносы строк (\n) и пробелы */
+    white-space: pre-wrap;
+    /* Если текст слишком длинный, это позволит ему переноситься на новую строку */
+    word-wrap: break-word;
 }
 .msg-in .msg-bubble { background: var(--msg-in); border-bottom-left-radius: 4px; border: 1px solid var(--glass-border); }
 .msg-out .msg-bubble { background: var(--msg-out); border-bottom-right-radius: 4px; color: white; }
@@ -329,11 +333,11 @@ ul { list-style: none; }
 .msg-status svg { width: 14px; height: 14px; fill: currentColor; }
 
 .msg-status.read {
-    color: var(--online);
+    color: #ffffff;
     opacity: 1;
 }
 .msg-status.read svg {
-    fill: var(--online);
+    fill: #ffffff;
 }
 
 .msg-attachment { border-radius: 10px; max-width: 100%; margin-top: 8px; cursor: pointer; transition: transform 0.2s;}
