@@ -1067,7 +1067,12 @@ function sendPushNotification(title, body) {
             reg.showNotification(title, {
                 body: body,
                 icon: 'https://cdn-icons-png.flaticon.com/512/1041/1041916.png',
-                vibrate: [200, 100, 200]
+                vibrate: [200, 100, 200],
+                tag: Date.now().toString(), // Гарантированно уникальный тег, чтобы не стакались
+                data: {
+                    // Передаем ссылку на наш мессенджер, чтобы SW знал, что открывать
+                    url: window.location.href 
+                }
             });
         });
     }

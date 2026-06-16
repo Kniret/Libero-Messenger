@@ -1,5 +1,5 @@
 // sw.js
-const CACHE_NAME = 'libero-v34';
+const CACHE_NAME = 'libero-v35';
 const ASSETS = [
   './',
   './index.html',
@@ -62,5 +62,31 @@ self.addEventListener('fetch', (e) => {
         return response;
       })
       .catch(() => caches.match(e.request)) // Если интернета нет — берем из SW-кэша
+  );
+});
+
+// Обработка клика по уведомлению
+self.addEventListener('notificationclick', (event) => {
+  // 1. Закрываем само уведомление
+  event.notification.close();
+
+  // 2. Получаем URL из данных уведомления (или дефолтный)
+  const urlToOpen = event.notification.data?.url || '/';
+
+  // 3. Ищем открытую вкладку или открываем новую
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // Если вкладка с мессенджером уже где-то открыта (даже свернута) - фокусируемся на ней
+      for (let i = 0; i < windowClients.length; i++) {
+        const client = windowClients[i];
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // Если браузер был закрыт вообще - открываем новую вкладку
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
   );
 });
