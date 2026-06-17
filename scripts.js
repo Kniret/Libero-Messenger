@@ -372,53 +372,40 @@ setupUsernameBtn.addEventListener('click', async () => {
     }
 });
 
-logoutBtn.addEventListener('click', async () => {
-    try {
-        // 1. Отписываемся от всех активных слушателей Firebase, чтобы не тратить трафик
-        if (unsubscribeMessages) { unsubscribeMessages(); unsubscribeMessages = null; }
-        if (unsubscribeFriends) { unsubscribeFriends(); unsubscribeFriends = null; }
-        if (unsubscribeRequests) { unsubscribeRequests = null; }
-        
-        // Отписываемся от индивидуальных статусов друзей (онлайн/офлайн)
-        if (typeof friendListeners === 'object') {
-            Object.keys(friendListeners).forEach(uid => {
-                if (typeof friendListeners[uid] === 'function') friendListeners[uid]();
-            });
-            friendListeners = {};
-        }
+logoutBtn.addEventListener('click', () => {
+    // Вызываем твое кастомное окно подтверждения
+    if (typeof window.showCustomConfirm === 'function') {
+        window.showCustomConfirm(
+            'Выход из аккаунта',
+            'Вы уверены, что хотите выйти из мессенджера?',
+            async () => {
+                // Этот код сработает, только если юзер нажмет "ОК"
+                try {
+                    // 1. Отписываемся от слушателей Firebase
+                    if (unsubscribeMessages) { unsubscribeMessages(); unsubscribeMessages = null; }
+                    if (unsubscribeFriends) { unsubscribeFriends(); unsubscribeFriends = null; }
+                    if (unsubscribeRequests) { unsubscribeRequests = null; }
 
-        // 2. ТОТАЛЬНО ВЫЧИЩАЕМ интерфейс из HTML. Удаляем всё мясо, чтобы сзади была пустота!
-        if (friendsListContainer) friendsListContainer.innerHTML = '';
-        if (requestsListContainer) requestsListContainer.innerHTML = '';
-        if (messagesArea) messagesArea.innerHTML = '';
-        if (chatTargetName) chatTargetName.textContent = 'Выберите, кому хотите написать';
-        if (chatTargetStatus) {
-            chatTargetStatus.className = 'chat-target-status';
-            chatTargetStatus.textContent = '';
-        }
-        
-        // Сбрасываем кэш цветов аватаров и юзеров
-        userColorsCache = {};
-        currentUser = null;
-        currentChatFriend = null;
+                    // 2. Жестко вычищаем HTML-мясо из интерфейса, чтобы фон остался чистым
+                    friendsListContainer.innerHTML = '';
+                    requestsListContainer.innerHTML = '';
+                    messagesArea.innerHTML = '';
+                    chatTargetName.textContent = 'Выберите, кому хотите написать';
+                    chatTargetStatus.className = 'chat-target-status';
+                    chatTargetStatus.textContent = '';
 
-        // 3. Выходим из сессии Firebase
-        await signOut(auth);
-
-        // 4. СБРАСЫВАЕМ ЭКРАНЫ: Жестко прячем чат и принудительно включаем чистую форму логина
-        if (appContainer) appContainer.classList.add('hidden');
-        
-        activeTab = 'login';
-        if (typeof switchAuthTab === 'function') {
-            switchAuthTab('login'); // Переключаем вкладку на «Вход»
-        }
-        
-        if (authContainer) authContainer.classList.remove('hidden');
-
-        showNotification('Вы вышли из аккаунта', 'success');
-    } catch (err) {
-        console.error('Ошибка при выходе:', err);
-        showNotification(getAuthErrorMessage(err), 'error');
+                    // 3. Выходим из Firebase
+                    await signOut(auth);
+                    showNotification('Вы вышли из аккаунта', 'success');
+                } catch (err) {
+                    console.error('Ошибка при выходе:', err);
+                    showNotification(getAuthErrorMessage(err), 'error');
+                }
+            }
+        );
+    } else {
+        // Если вдруг функция подтверждения не загрузилась, выпускаем по старинке без спроса
+        signOut(auth).catch(console.error);
     }
 });
 
