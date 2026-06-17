@@ -10,7 +10,7 @@ const firebaseConfig = {
   projectId: "katik-messenger",
   storageBucket: "katik-messenger.firebasestorage.app",
   messagingSenderId: "528309622983",
-  appId: "1:528309622983:web:faa6c893c6a36013eac6e2"
+  appId: "1:528309622983:web:faa6c893c6a36013eac6e2" 
 };
 
 const app = initializeApp(firebaseConfig);
