@@ -884,32 +884,26 @@ function listenToMessages() {
     // Функция для правильной вставки элемента по хронологии (timestamp)
     function insertMessageInOrder(newMsgNode, timestamp) {
         const typingIndicator = document.getElementById('typingIndicator');
-        // Получаем все существующие сообщения в чате (исключая разделители дат и индикатор)
         const existingMessages = Array.from(messagesArea.querySelectorAll('.message'));
         
-        // Ищем первое сообщение, у которого время создания БОЛЬШЕ, чем у нашего нового сообщения
         const nextMessage = existingMessages.find(msgNode => {
             const msgTime = parseInt(msgNode.getAttribute('data-timestamp'), 10);
             return msgTime > timestamp;
         });
 
         if (nextMessage) {
-            // Вставляем перед найденным более поздним сообщением
             messagesArea.insertBefore(newMsgNode, nextMessage);
         } else {
-            // Если более поздних сообщений нет, вставляем в самый конец перед индикатором ввода
             messagesArea.insertBefore(newMsgNode, typingIndicator);
         }
     }
 
     function applySnapshot(snapshot) {
-        const unreadIds = [];
+        const unreadIds = []; // <--- Создаем массив для сбора ID непрочитанных сообщений
 
         snapshot.docChanges().forEach((change) => {
             const msg = change.doc.data();
             msg.id = change.doc.id;
-
-            // Если createdAt еще не успел установиться на сервере, игнорируем или берем текущее время
             const msgTimestamp = msg.createdAt || Date.now();
 
             // 1. ЕСЛИ СООБЩЕНИЕ ДОБАВЛЕНО
@@ -918,23 +912,20 @@ function listenToMessages() {
                 const dateString = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
                 const dateId = getDateId(msgTimestamp);
 
-                // Создаем разделитель даты, если его нет
                 if (!document.getElementById(dateId)) {
                     const divDivider = document.createElement('div');
                     divDivider.className = 'date-divider';
                     divDivider.id = dateId;
                     divDivider.innerHTML = `<span>${dateString}</span>`;
-                    // Разделитель дат тоже поднимется наверх перед индикатором
                     messagesArea.insertBefore(divDivider, document.getElementById('typingIndicator'));
                 }
 
                 const timeString = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
                 const isMyMessage = msg.senderUid === currentUser.uid;
                 
-                // Создаем узел сообщения
                 const divMsg = document.createElement('div');
                 divMsg.id = `msg-${msg.id}`;
-                divMsg.setAttribute('data-timestamp', msgTimestamp); // Сохраняем время в атрибут для сортировки DOM
+                divMsg.setAttribute('data-timestamp', msgTimestamp); 
                 divMsg.className = `message ${isMyMessage ? 'msg-out' : 'msg-in'}`;
                 
                 const tickIcon = msg.isRead ? '#icon-check-double' : '#icon-check';
@@ -950,10 +941,9 @@ function listenToMessages() {
                     </div>
                 `;
                 
-                // ВАЖНО: Вставляем сообщение строго по его времени
                 insertMessageInOrder(divMsg, msgTimestamp);
 
-                // Собираем входящие непрочитанные
+                // ВЛЕПИЛИ СЮДА: Если сообщение пришло от собеседника и оно не прочитано — добавляем в список
                 if (!isMyMessage && !msg.isRead) {
                     unreadIds.push(msg.id);
                 }
@@ -980,10 +970,18 @@ function listenToMessages() {
 
         scrollToBottom();
 
-        // Помечаем прочитанными в БД
-        unreadIds.forEach(id => {
-            updateDoc(doc(db, 'messages', id), { isRead: true }).catch(console.error);
-        });
+        // Если в открытом чате есть новые непрочитанные сообщения
+        if (unreadIds.length > 0) {
+            // Помечаем их прочитанными в Firebase
+            unreadIds.forEach(id => {
+                updateDoc(doc(db, 'messages', id), { isRead: true }).catch(console.error);
+            });
+            
+            // Очищаем пуши в шторке iOS ТОЛЬКО от этого конкретного пользователя
+            if (currentChatFriend) {
+                clearNotificationsBySender(currentChatFriend.uid);
+            }
+        }
     }
 
     function ensureTypingIndicator() {
@@ -997,7 +995,6 @@ function listenToMessages() {
         }
     }
 
-// МЫ УБРАЛИ orderBy. Теперь индексы Firestore больше НЕ ТРЕБУЮТСЯ вообще!
     const sentQuery = query(
         collection(db, 'messages'),
         where('senderUid', '==', currentUser.uid),
@@ -1030,14 +1027,13 @@ function appendDividerNode(dateString) {
     const div = document.createElement('div');
     div.className = 'date-divider';
     div.innerHTML = `<span>${dateString}</span>`;
-    messagesArea.appendChild(div); // Добавляем в конец
+    messagesArea.appendChild(div); 
 }
 
 function appendMessageNode(text, isOut, time, isRead) {
     const div = document.createElement('div');
     div.className = `message ${isOut ? 'msg-out' : 'msg-in'}`;
     
-    // ДОБАВЛЕНО: Присваиваем класс 'read', если сообщение прочитано
     const tickIcon = isRead ? '#icon-check-double' : '#icon-check';
     const tickClass = isRead ? 'msg-status read' : 'msg-status';
     
@@ -1061,7 +1057,6 @@ function scrollToBottom() {
 const html = document.documentElement;
 const themeIcon = document.getElementById('themeIcon');
 
-// Проверяем сохраненную тему при запуске
 const savedTheme = localStorage.getItem('libero_theme') || 'dark';
 setTheme(savedTheme);
 
@@ -1073,7 +1068,6 @@ themeToggleBtn.addEventListener('click', () => {
 function setTheme(themeName) {
     html.setAttribute('data-theme', themeName);
     localStorage.setItem('libero_theme', themeName);
-    // Меняем иконку (солнце для темной, луна для светлой)
     if(themeIcon) {
         themeIcon.innerHTML = `<use href="${themeName === 'dark' ? '#icon-sun' : '#icon-moon'}"></use>`;
     }
@@ -1081,18 +1075,16 @@ function setTheme(themeName) {
 
 backBtnMobile.addEventListener('click', () => {
     document.getElementById('sidebar').classList.remove('hidden-mobile');
-    closeChat(); // Жестко сбрасываем состояние активного чата
+    closeChat(); 
 });
 
-// Кнопка информации о чате
 const infoToggleBtn = document.getElementById('infoToggleBtn');
 infoToggleBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const panel = document.getElementById('infoPanel');
     
-    // Обновляем панель информации
     if (currentChatFriend) {
-    document.getElementById('infoName').textContent = currentChatFriend.username;
+        document.getElementById('infoName').textContent = currentChatFriend.username;
         document.getElementById('infoAvatar').textContent = currentChatFriend.username.charAt(0).toUpperCase();
         document.getElementById('infoAvatar').style.background = getUserColor(currentChatFriend.uid);
         document.getElementById('infoStatus').textContent = 'В сети';
@@ -1101,7 +1093,7 @@ infoToggleBtn.addEventListener('click', (e) => {
     panel.classList.toggle('open');
 });
 
-/* === СИСТЕМА ЗВОНКОВ (КРАСИВАЯ АНИМАЦИЯ ДЛЯ ТЕСТА) === */
+/* === СИСТЕМА ЗВОНКОВ === */
 const callModal = document.getElementById('callModal');
 const callVoiceBtn = document.getElementById('callVoiceBtn');
 const callVideoBtn = document.getElementById('callVideoBtn');
@@ -1132,7 +1124,6 @@ function startCall(type) {
     
     callModal.classList.add('active');
 
-    // Симуляция ответа друга
     setTimeout(() => {
         if(!callModal.classList.contains('active')) return;
         if(type === 'video') {
@@ -1158,26 +1149,40 @@ function endCall() {
 }
 
 // Функция отправки системного Push-уведомления
-function sendPushNotification(title, body) {
+function sendPushNotification(title, body, senderUid) {
     if ("Notification" in window && Notification.permission === "granted") {
         navigator.serviceWorker.ready.then(reg => {
             reg.showNotification(title, {
                 body: body,
                 icon: 'https://cdn-icons-png.flaticon.com/512/1041/1041916.png',
                 vibrate: [200, 100, 200],
-                tag: Date.now().toString(), // Гарантированно уникальный тег, чтобы не стакались
+                tag: senderUid, 
                 data: {
-                    // Передаем ссылку на наш мессенджер, чтобы SW знал, что открывать
-                    url: window.location.href 
+                    url: window.location.href,
+                    senderUid: senderUid 
                 }
             });
         });
     }
 }
 
+// Функция очистки уведомлений КОНКРЕТНОГО пользователя
+function clearNotificationsBySender(senderUid) {
+    if ('serviceWorker' in navigator && 'Notification' in window) {
+        navigator.serviceWorker.ready.then((registration) => {
+            registration.getNotifications().then((notifications) => {
+                notifications.forEach((notification) => {
+                    if (notification.tag === senderUid || (notification.data && notification.data.senderUid === senderUid)) {
+                        notification.close();
+                    }
+                });
+            });
+        }).catch(err => console.error('Не удалось очистить уведомления:', err));
+    }
+}
+
 // Глобальный слушатель новых сообщений
 function startGlobalNotificationListener() {
-    // Запрашиваем права через кастомное окно
     if ("Notification" in window && Notification.permission === "default") {
         setTimeout(() => {
             window.showCustomConfirm(
@@ -1203,18 +1208,16 @@ function startGlobalNotificationListener() {
     );
 
     onSnapshot(unreadQuery, (snapshot) => {
-        snapshot.docChanges().forEach(async (change) => { // Добавили async сюда
+        snapshot.docChanges().forEach(async (change) => {
             if (change.type === 'added') {
                 const msg = change.doc.data();
                 
-                // Проверяем: если вкладка свернута ИЛИ открыт другой чат -> шлем уведомление
                 const isTabHidden = document.visibilityState === 'hidden';
                 const isDifferentChat = !currentChatFriend || currentChatFriend.uid !== msg.senderUid;
 
                 if (isTabHidden || isDifferentChat) {
                     const textStr = msg.type === 'image' ? '📸 Отправил(а) фото' : msg.text;
                     
-                    // Получаем логин отправителя из базы
                     let senderName = 'Новое сообщение';
                     try {
                         const senderSnap = await getDoc(doc(db, 'users', msg.senderUid));
@@ -1225,35 +1228,23 @@ function startGlobalNotificationListener() {
                         console.error('Ошибка получения имени для уведомления:', e);
                     }
 
-                    // Отправляем пуш, где Заголовок = Логин друга, а Тело = текст сообщения
-                    sendPushNotification(senderName, textStr);
+                    sendPushNotification(senderName, textStr, msg.senderUid);
                 }
             }
         });
     });
 }
 
-// Функция автоматической очистки уведомлений из центра уведомлений ОС
-function clearAllAppNotifications() {
-    if ('serviceWorker' in navigator && 'Notification' in window) {
-        navigator.serviceWorker.ready.then((registration) => {
-            // Запрашиваем все активные уведомления этого воркера
-            registration.getNotifications().then((notifications) => {
-                notifications.forEach((notification) => {
-                    // Закрываем каждое уведомление, удаляя его из шторки телефона / центра ПК
-                    notification.close();
-                });
-            });
-        }).catch(err => console.error('Не удалось очистить уведомления:', err));
-    }
-}
-
-// Вызываем очистку при загрузке страницы
-clearAllAppNotifications();
-
-// Вызываем очистку, когда пользователь просто разворачивает вкладку с сайтом
+// Умный обработчик возвращения пользователя на вкладку
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-        clearAllAppNotifications();
+        // Проставляем онлайн
+        setOnlineStatus(true);
+        // Очищаем уведомления ТОЛЬКО того друга, чей чат сейчас открыт
+        if (currentChatFriend) {
+            clearNotificationsBySender(currentChatFriend.uid);
+        }
+    } else {
+        setOnlineStatus(false);
     }
 });
