@@ -16,7 +16,6 @@ import {
     where, 
     addDoc, 
     onSnapshot,
-    updateDoc,
     deleteDoc,
     updateDoc,
     deleteField,
@@ -24,7 +23,6 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 import { supabase } from './supabase.js';
-import { signOut } from "firebase/auth";
 
 function urlB64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -1202,24 +1200,6 @@ function acceptCall() {
 function endCall() {
     callModal.classList.remove('active');
     videoCallFS.classList.remove('active');
-}
-
-// Функция отправки системного Push-уведомления
-function sendPushNotification(title, body, senderUid) {
-    if ("Notification" in window && Notification.permission === "granted") {
-        navigator.serviceWorker.ready.then(reg => {
-            reg.showNotification(title, {
-                body: body,
-                icon: 'https://cdn-icons-png.flaticon.com/512/1041/1041916.png',
-                vibrate: [200, 100, 200],
-                tag: senderUid, 
-                data: {
-                    url: window.location.href,
-                    senderUid: senderUid 
-                }
-            });
-        });
-    }
 }
 
 // Функция очистки уведомлений КОНКРЕТНОГО пользователя
