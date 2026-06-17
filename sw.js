@@ -1,5 +1,5 @@
 // sw.js
-const CACHE_NAME = 'libero-v42';
+const CACHE_NAME = 'libero-v43';
 const ASSETS = [
   './',
   './index.html',

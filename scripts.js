@@ -843,10 +843,31 @@ function listenToMessages() {
     messagesArea.innerHTML = ''; 
     ensureTypingIndicator();
 
-    // Вспомогательная функция для генерации ID даты, чтобы не дублировать разделители
+    // Вспомогательная функция для генерации ID даты
     const getDateId = (timestamp) => {
         return 'date-' + new Date(timestamp).toLocaleDateString('ru-RU').replace(/\./g, '-');
     };
+
+    // Функция для правильной вставки элемента по хронологии (timestamp)
+    function insertMessageInOrder(newMsgNode, timestamp) {
+        const typingIndicator = document.getElementById('typingIndicator');
+        // Получаем все существующие сообщения в чате (исключая разделители дат и индикатор)
+        const existingMessages = Array.from(messagesArea.querySelectorAll('.message'));
+        
+        // Ищем первое сообщение, у которого время создания БОЛЬШЕ, чем у нашего нового сообщения
+        const nextMessage = existingMessages.find(msgNode => {
+            const msgTime = parseInt(msgNode.getAttribute('data-timestamp'), 10);
+            return msgTime > timestamp;
+        });
+
+        if (nextMessage) {
+            // Вставляем перед найденным более поздним сообщением
+            messagesArea.insertBefore(newMsgNode, nextMessage);
+        } else {
+            // Если более поздних сообщений нет, вставляем в самый конец перед индикатором ввода
+            messagesArea.insertBefore(newMsgNode, typingIndicator);
+        }
+    }
 
     function applySnapshot(snapshot) {
         const unreadIds = [];
@@ -855,19 +876,22 @@ function listenToMessages() {
             const msg = change.doc.data();
             msg.id = change.doc.id;
 
+            // Если createdAt еще не успел установиться на сервере, игнорируем или берем текущее время
+            const msgTimestamp = msg.createdAt || Date.now();
+
             // 1. ЕСЛИ СООБЩЕНИЕ ДОБАВЛЕНО
             if (change.type === 'added') {
-                const date = new Date(msg.createdAt);
+                const date = new Date(msgTimestamp);
                 const dateString = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
-                const dateId = getDateId(msg.createdAt);
+                const dateId = getDateId(msgTimestamp);
 
-                // Проверяем, есть ли уже разделитель для этого дня
+                // Создаем разделитель даты, если его нет
                 if (!document.getElementById(dateId)) {
                     const divDivider = document.createElement('div');
                     divDivider.className = 'date-divider';
                     divDivider.id = dateId;
                     divDivider.innerHTML = `<span>${dateString}</span>`;
-                    // Вставляем перед индикатором ввода
+                    // Разделитель дат тоже поднимется наверх перед индикатором
                     messagesArea.insertBefore(divDivider, document.getElementById('typingIndicator'));
                 }
 
@@ -876,7 +900,8 @@ function listenToMessages() {
                 
                 // Создаем узел сообщения
                 const divMsg = document.createElement('div');
-                divMsg.id = `msg-${msg.id}`; // Присваиваем уникальный ID узлу!
+                divMsg.id = `msg-${msg.id}`;
+                divMsg.setAttribute('data-timestamp', msgTimestamp); // Сохраняем время в атрибут для сортировки DOM
                 divMsg.className = `message ${isMyMessage ? 'msg-out' : 'msg-in'}`;
                 
                 const tickIcon = msg.isRead ? '#icon-check-double' : '#icon-check';
@@ -892,8 +917,8 @@ function listenToMessages() {
                     </div>
                 `;
                 
-                // Вставляем строго перед индикатором ввода
-                messagesArea.insertBefore(divMsg, document.getElementById('typingIndicator'));
+                // ВАЖНО: Вставляем сообщение строго по его времени
+                insertMessageInOrder(divMsg, msgTimestamp);
 
                 // Собираем входящие непрочитанные
                 if (!isMyMessage && !msg.isRead) {
@@ -901,11 +926,10 @@ function listenToMessages() {
                 }
             }
 
-            // 2. ЕСЛИ СООБЩЕНИЕ ИЗМЕНИЛОСЬ (например, изменился статус прочтения isRead)
+            // 2. ЕСЛИ СООБЩЕНИЕ ИЗМЕНИЛОСЬ (статус прочтения)
             if (change.type === 'modified') {
                 const msgNode = document.getElementById(`msg-${msg.id}`);
                 if (msgNode && msg.senderUid === currentUser.uid) {
-                    // Обновляем только иконку галочки внутри мета-данных, не трогая всё сообщение!
                     const statusSpan = msgNode.querySelector('.msg-status');
                     if (statusSpan) {
                         statusSpan.className = msg.isRead ? 'msg-status read' : 'msg-status';
@@ -940,15 +964,18 @@ function listenToMessages() {
         }
     }
 
+    // ВАЖНО: Добавлена сортировка orderBy('createdAt', 'asc') в оба запроса
     const sentQuery = query(
         collection(db, 'messages'),
         where('senderUid', '==', currentUser.uid),
-        where('receiverUid', '==', currentChatFriend.uid)
+        where('receiverUid', '==', currentChatFriend.uid),
+        orderBy('createdAt', 'asc')
     );
     const receivedQuery = query(
         collection(db, 'messages'),
         where('senderUid', '==', currentChatFriend.uid),
-        where('receiverUid', '==', currentUser.uid)
+        where('receiverUid', '==', currentUser.uid),
+        orderBy('createdAt', 'asc')
     );
 
     let messagesLoadErrorShown = false;
