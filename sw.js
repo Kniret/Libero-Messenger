@@ -29,7 +29,7 @@ messaging.onBackgroundMessage((payload) => {
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
-const CACHE_NAME = 'libero-v65';
+const CACHE_NAME = 'libero-v67';
 const ASSETS = [
   './',
   './index.html',

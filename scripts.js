@@ -1,5 +1,5 @@
 // scripts.js
-import { auth, db } from './firebase.js';
+import { auth, db, messaging } from './firebase.js';
 import { 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword, 
@@ -21,7 +21,6 @@ import {
     limit
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-import { auth, db, messaging } from './firebase.js'; // Добавили messaging сюда
 import { getToken } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging.js";
 
 /* === ЛОКАЛЬНОЕ СОСТОЯНИЕ === */
