@@ -291,6 +291,35 @@ onAuthStateChanged(auth, async (firebaseUser) => {
                 startListeningRequestsAndFriends();
                 startGlobalNotificationListener();
                 setOnlineStatus(true);
+
+                     // --- НОВОЕ: Автоматическое открытие чата из Push-уведомления ---
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const chatWithUid = urlParams.get('chatWith');
+                    
+                    if (chatWithUid) {
+                        try {
+                            // Запрашиваем данные пользователя, которому принадлежит этот UID
+                            const friendSnap = await getDoc(doc(db, 'users', chatWithUid));
+                            if (friendSnap.exists()) {
+                                const friendData = friendSnap.data();
+                                
+                                // Формируем объект друга для функции openChat
+                                const friendObject = {
+                                    uid: chatWithUid,
+                                    username: friendData.username,
+                                    color: friendData.avatarColor || '#6366f1' // дефолтный цвет если нет
+                                };
+                                
+                                // Очищаем параметры из адресной строки браузера, чтобы при обычном рефреше чат не открывался заново
+                                window.history.replaceState({}, document.title, window.location.pathname);
+                                
+                                // Открываем чат! (Убедись, что функция openChat доступна или объявлена выше)
+                                openChat(friendObject);
+                            }
+                        } catch (error) {
+                            console.error('Ошибка автоматического открытия чата из пуша:', error);
+                        }
+                    }
             } else {
                 // Новый юзер: прячем вход, включаем шаг 2
                 mainAuthCard.style.display = 'none'; 
@@ -907,13 +936,14 @@ async function sendMessage() {
             if (pushSubStr) {
                 const subscriptionObject = JSON.parse(pushSubStr);
                 
-                await supabase.functions.invoke('send-push', {
-                    body: {
-                        subscription: subscriptionObject,
-                        title: currentUser.username, // Имя отправителя
-                        body: text // Текст сообщения
-                    }
-                });
+            await supabase.functions.invoke('send-push', {
+                body: {
+                    subscription: subscriptionObject,
+                    title: currentUser.username, 
+                    body: text,
+                    senderUid: currentUser.uid // <-- НОВОЕ: Передаем ID отправителя
+                }
+            });
             }
         }
 

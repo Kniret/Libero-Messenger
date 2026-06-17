@@ -1,5 +1,5 @@
 // sw.js
-const CACHE_NAME = 'libero-v81';
+const CACHE_NAME = 'libero-v82';
 const ASSETS = [
   './',
   './index.html',
@@ -65,46 +65,26 @@ self.addEventListener('fetch', (e) => {
   );
 });
 
-// Обработка клика по уведомлению
-self.addEventListener('notificationclick', (event) => {
-  // 1. Закрываем само уведомление
-  event.notification.close();
-
-  // 2. Получаем URL из данных уведомления (или дефолтный)
-  const urlToOpen = event.notification.data?.url || '/';
-
-  // 3. Ищем открытую вкладку или открываем новую
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      // Если вкладка с мессенджером уже где-то открыта (даже свернута) - фокусируемся на ней
-      for (let i = 0; i < windowClients.length; i++) {
-        const client = windowClients[i];
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          return client.focus();
-        }
-      }
-      // Если браузер был закрыт вообще - открываем новую вкладку
-      if (clients.openWindow) {
-        return clients.openWindow(urlToOpen);
-      }
-    })
-  );
-});
-
 // Слушаем входящие пуш-уведомления от сервера (Supabase)
 self.addEventListener('push', (event) => {
   if (!event.data) return;
 
   try {
-    // Ожидаем, что сервер пришлет JSON с title и body
     const data = event.data.json();
+    
+    // Формируем красивую ссылку. Если senderUid есть, добавляем его в параметры урла
+    const chatUrl = data.senderUid 
+      ? `${self.location.origin}${self.location.pathname}?chatWith=${data.senderUid}`
+      : `${self.location.origin}${self.location.pathname}`;
     
     const options = {
       body: data.body,
       icon: 'https://cdn-icons-png.flaticon.com/512/1041/1041916.png',
       vibrate: [200, 100, 200],
+      tag: data.senderUid || 'general',
       data: {
-        url: self.location.origin // Чтобы при клике открывался мессенджер
+        url: chatUrl, // <-- Передаем точный URL с ID чата внутрь данных уведомления
+        senderUid: data.senderUid
       }
     };
 
@@ -114,4 +94,32 @@ self.addEventListener('push', (event) => {
   } catch (err) {
     console.error('Ошибка обработки Push:', err);
   }
+});
+
+// Обработка клика по уведомлению
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  // Достаем сформированный URL из данных пуша
+  const urlToOpen = event.notification.data?.url || self.location.origin;
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // Ищем, открыта ли вкладка нашего приложения
+      for (let i = 0; i < windowClients.length; i++) {
+        const client = windowClients[i];
+        
+        // Если вкладка открыта — перенаправляем её на URL с нужным чатом и фокусируемся
+        if (client.url.includes(self.location.origin) && 'navigate' in client) {
+          client.navigate(urlToOpen);
+          return client.focus();
+        }
+      }
+      
+      // Если приложение вообще закрыто — открываем новую вкладку сразу с нужным чатом
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
 });
