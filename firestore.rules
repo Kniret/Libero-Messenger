@@ -26,7 +26,8 @@ service cloud.firestore {
         && request.resource.data.imageUrl is string
         && request.resource.data.imageUrl.size() > 0
         && request.resource.data.text is string
-        && request.resource.data.text.size() <= 500;
+        && request.resource.data.text.size() <= 500
+        && (!('encKeyB64' in request.resource.data) || request.resource.data.encKeyB64 is string);
     }
 
     match /users/{userId} {

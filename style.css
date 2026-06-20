@@ -338,6 +338,35 @@ ul { list-style: none; }
 
 .msg-attachment { border-radius: 10px; max-width: 240px; max-height: 320px; width: 100%; margin-top: 4px; cursor: pointer; transition: transform 0.2s; object-fit: cover; display: block; }
 .msg-attachment:hover { transform: scale(1.02); }
+.msg-attachment-loading {
+    min-height: 180px;
+    min-width: 180px;
+    background: var(--glass-border);
+    border-radius: 10px;
+    position: relative;
+}
+.msg-attachment-loading::after {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 30px; height: 30px;
+    border: 3px solid var(--glass-border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+.msg-attachment-error {
+    min-height: 80px;
+    min-width: 180px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px dashed rgba(239, 68, 68, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--danger);
+    font-size: 12px;
+}
 
 .attach-preview {
     display: flex;
@@ -851,6 +880,9 @@ body.auth-loading .preloader {
     border-radius: 50%;
     object-fit: cover;
 }
+.avatar-img-loading {
+    opacity: 0.3;
+}
 
 /* === СТИЛИ ДЛЯ ПРЕЛОАДЕРА === */
 .preloader {
@@ -901,4 +933,62 @@ body:not(.auth-loading) .preloader {
 body.auth-loading .auth-container,
 body.auth-loading .app-container {
     display: none !important;
+}
+
+/* === AVATAR CROP MODAL === */
+.avatar-crop-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    z-index: 10002;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    padding: 20px;
+}
+.avatar-crop-overlay.active {
+    opacity: 1;
+    pointer-events: all;
+}
+.avatar-crop-card {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+    padding: 24px;
+    width: 380px;
+    max-width: 100%;
+    text-align: center;
+    box-shadow: var(--panel-shadow);
+}
+.avatar-crop-card h3 {
+    margin-bottom: 16px;
+    font-size: 18px;
+}
+.avatar-crop-area {
+    width: 280px;
+    height: 280px;
+    margin: 0 auto 16px;
+    position: relative;
+    overflow: hidden;
+    border-radius: 16px;
+    background: var(--glass-border);
+    cursor: grab;
+    touch-action: none;
+}
+.avatar-crop-area:active {
+    cursor: grabbing;
+}
+#avatarCropCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+.avatar-crop-controls {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
 }

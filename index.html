@@ -186,7 +186,6 @@
             <p style="font-size: 14px; line-height: 1.5;" id="infoBio">—</p>
         </div>
         <div class="info-section">
-            <button type="button" class="profile-link-btn" id="infoOpenProfileBtn">Открыть профиль</button>
             <button type="button" class="profile-danger-btn" id="infoRemoveFriendBtn" style="display:none;">Удалить из друзей</button>
         </div>
     </div>
@@ -255,6 +254,20 @@
         <div class="custom-confirm-buttons">
             <button class="custom-confirm-btn yes" id="customConfirmYesBtn">Да</button>
             <button class="custom-confirm-btn no" id="customConfirmNoBtn">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Avatar Crop Modal -->
+<div class="avatar-crop-overlay" id="avatarCropModal">
+    <div class="avatar-crop-card">
+        <h3>Обрезать аватар</h3>
+        <div class="avatar-crop-area" id="avatarCropArea">
+            <canvas id="avatarCropCanvas"></canvas>
+        </div>
+        <div class="avatar-crop-controls">
+            <button type="button" class="custom-confirm-btn no" id="avatarCropCancelBtn">Отмена</button>
+            <button type="button" class="custom-confirm-btn yes" id="avatarCropConfirmBtn">Сохранить</button>
         </div>
     </div>
 </div>

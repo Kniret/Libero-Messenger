@@ -1,5 +1,5 @@
 // scripts.js
-import { auth, db, storage } from './firebase.js';
+import { auth, db } from './firebase.js';
 import { 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword, 
@@ -22,13 +22,10 @@ import {
     deleteField,
     limit
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import {
-    ref,
-    uploadBytes,
-    getDownloadURL
-} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
 import { supabase } from './supabase.js';
+import { CryptoManager } from './crypto.js';
+import { uploadEncryptedChatImage, downloadAndDecryptChatImage, uploadEncryptedAvatar, downloadAndDecryptAvatar } from './storage.js';
 
 function urlB64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -120,7 +117,29 @@ function applyAvatarToElement(element, user) {
     if (!element || !user) return;
     const letter = (user.username || '?').charAt(0).toUpperCase();
     element.innerHTML = '';
-    if (user.avatarUrl) {
+
+    // Handle encrypted avatar
+    if (user.avatarStoragePath && user.encKeyB64) {
+        const img = document.createElement('img');
+        img.className = 'avatar-img avatar-img-loading';
+        img.alt = user.username || '';
+        element.appendChild(img);
+        element.style.background = getUserColor(user.uid);
+
+        // Decrypt async
+        downloadAndDecryptAvatar(user.avatarStoragePath, user.encKeyB64)
+            .then(blob => {
+                img.src = URL.createObjectURL(blob);
+                img.classList.remove('avatar-img-loading');
+                element.style.background = 'transparent';
+            })
+            .catch(err => {
+                console.error('Failed to decrypt avatar for', user.uid, err);
+                img.remove();
+                element.textContent = letter;
+                element.style.background = getUserColor(user.uid);
+            });
+    } else if (user.avatarUrl) {
         const img = document.createElement('img');
         img.src = user.avatarUrl;
         img.alt = user.username || '';
@@ -135,6 +154,10 @@ function applyAvatarToElement(element, user) {
 
 function buildAvatarContainerHtml(user) {
     const letter = (user.username || '?').charAt(0).toUpperCase();
+    // For encrypted avatars, we'll show the letter initially and decrypt async via applyAvatarToElement
+    if (user.avatarStoragePath && user.encKeyB64) {
+        return letter; // Will be replaced by async decryption in listenLastMessage
+    }
     if (user.avatarUrl) {
         return `<img src="${user.avatarUrl}" class="avatar-img" alt="${user.username}">`;
     }
@@ -465,6 +488,8 @@ setupUsernameBtn.addEventListener('click', async () => {
             email: firebaseUser.email || '',
             bio: '',
             avatarUrl: '',
+            avatarStoragePath: '',
+            encKeyB64: '',
             createdAt: Date.now()
         });
 
@@ -821,12 +846,15 @@ function renderFriendsList(friends) {
         cacheUserProfile(friend.uid).then((profile) => {
             if (profile) {
                 friend.avatarUrl = profile.avatarUrl || '';
+                friend.avatarStoragePath = profile.avatarStoragePath || '';
+                friend.encKeyB64 = profile.encKeyB64 || '';
                 friend.bio = profile.bio || '';
             }
         });
 
         const color = getUserColor(friend.uid);
         const avatarContent = buildAvatarContainerHtml(friend);
+        const hasAvatar = friend.avatarUrl || (friend.avatarStoragePath && friend.encKeyB64);
 
         const div = document.createElement('div');
         div.id = `chat-item-${friend.uid}`;
@@ -835,7 +863,7 @@ function renderFriendsList(friends) {
         
         div.innerHTML = `
             <div class="avatar-container">
-                <div class="avatar" id="list-avatar-${friend.uid}" style="background:${friend.avatarUrl ? 'transparent' : color}">${avatarContent}</div>
+                <div class="avatar" id="list-avatar-${friend.uid}" style="background:${hasAvatar ? 'transparent' : color}">${avatarContent}</div>
                 <div class="online-dot" id="dot-${friend.uid}"></div>
             </div>
             <div class="chat-info">
@@ -849,6 +877,12 @@ function renderFriendsList(friends) {
             </div>
         `;
         chatList.appendChild(div);
+
+        // If avatar is encrypted, trigger async decryption via applyAvatarToElement
+        if (friend.avatarStoragePath && friend.encKeyB64) {
+            const listAvatar = document.getElementById(`list-avatar-${friend.uid}`);
+            if (listAvatar) applyAvatarToElement(listAvatar, friend);
+        }
 
         listenLastMessage(friend.uid);
     });
@@ -943,7 +977,6 @@ const profileBio = document.getElementById('profileBio');
 const profileSaveBtn = document.getElementById('profileSaveBtn');
 const profileRemoveFriendBtn = document.getElementById('profileRemoveFriendBtn');
 const infoBio = document.getElementById('infoBio');
-const infoOpenProfileBtn = document.getElementById('infoOpenProfileBtn');
 const infoRemoveFriendBtn = document.getElementById('infoRemoveFriendBtn');
 
 function closeChat() {
@@ -1095,15 +1128,18 @@ async function sendPendingAttachments(caption = '') {
 
     for (const item of files) {
         try {
-            const path = `chat/${currentUser.uid}/${Date.now()}_${item.file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-            const storageRef = ref(storage, path);
-            await uploadBytes(storageRef, item.file);
-            const imageUrl = await getDownloadURL(storageRef);
+            // Encrypt + upload to Supabase
+            const { path: storagePath, encKeyB64 } = await uploadEncryptedChatImage(
+                item.file, currentUser.uid, currentChatFriend.uid
+            );
+
+            // Store the encrypted path + key in the Firestore message
             await addDoc(collection(db, 'messages'), {
                 senderUid: currentUser.uid,
                 receiverUid: currentChatFriend.uid,
                 type: 'image',
-                imageUrl,
+                imageUrl: storagePath,  // now a Supabase storage path, not a public URL
+                encKeyB64,             // encryption key so receiver can decrypt
                 text: caption || '',
                 createdAt: Date.now(),
                 isRead: false
@@ -1151,9 +1187,38 @@ function listenToMessages() {
 
         const tickIcon = msg.isRead ? '#icon-check-double' : '#icon-check';
         const tickClass = msg.isRead ? 'msg-status read' : 'msg-status';
-        const imagePart = msg.type === 'image' && msg.imageUrl
-            ? `<img src="${msg.imageUrl}" class="msg-attachment" alt="Фото">`
-            : '';
+
+        // Handle encrypted image messages
+        let imagePart = '';
+        if (msg.type === 'image' && msg.imageUrl) {
+            if (msg.encKeyB64) {
+                // Encrypted image — create a placeholder and decrypt async
+                const imgId = `enc-img-${msg.id}`;
+                imagePart = `<img id="${imgId}" class="msg-attachment msg-attachment-loading" alt="Фото">`;
+                // Async decrypt
+                downloadAndDecryptChatImage(msg.imageUrl, msg.encKeyB64)
+                    .then(blob => {
+                        const imgEl = document.getElementById(imgId);
+                        if (imgEl) {
+                            imgEl.src = URL.createObjectURL(blob);
+                            imgEl.classList.remove('msg-attachment-loading');
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Failed to decrypt image:', err);
+                        const imgEl = document.getElementById(imgId);
+                        if (imgEl) {
+                            imgEl.alt = 'Не удалось расшифровать';
+                            imgEl.classList.remove('msg-attachment-loading');
+                            imgEl.classList.add('msg-attachment-error');
+                        }
+                    });
+            } else {
+                // Legacy: unencrypted Firebase URL (backwards compatibility)
+                imagePart = `<img src="${msg.imageUrl}" class="msg-attachment" alt="Фото">`;
+            }
+        }
+
         const textPart = msg.text ? `<div>${escapeHtml(msg.text)}</div>` : '';
 
         divMsg.innerHTML = `
@@ -1345,11 +1410,6 @@ if (myProfileName) {
     });
 }
 
-if (infoOpenProfileBtn) {
-    infoOpenProfileBtn.addEventListener('click', () => {
-        if (currentChatFriend) openProfile(currentChatFriend.uid);
-    });
-}
 
 if (infoRemoveFriendBtn) {
     infoRemoveFriendBtn.addEventListener('click', () => {
@@ -1418,10 +1478,32 @@ async function openProfile(uid) {
 
     profileUsername.textContent = profile.username;
     profileStatusText.textContent = profile.isOnline ? 'в сети' : 'не в сети';
-    profileEmail.value = profile.email || auth.currentUser?.email || '';
     profileBio.value = profile.bio || '';
 
-    if (profile.avatarUrl) {
+    // Hide email for other users — privacy
+    const profileEmailBlock = document.getElementById('profileEmailBlock');
+    if (isOwnProfile) {
+        profileEmail.value = profile.email || auth.currentUser?.email || '';
+        if (profileEmailBlock) profileEmailBlock.style.display = 'block';
+    } else {
+        if (profileEmailBlock) profileEmailBlock.style.display = 'none';
+    }
+
+    // Handle encrypted avatar
+    if (profile.avatarStoragePath && profile.encKeyB64) {
+        try {
+            const blob = await downloadAndDecryptAvatar(profile.avatarStoragePath, profile.encKeyB64);
+            const url = URL.createObjectURL(blob);
+            profileAvatarImg.src = url;
+            profileAvatarImg.style.display = 'block';
+            profileAvatarLetter.style.display = 'none';
+        } catch (e) {
+            console.error('Failed to decrypt avatar:', e);
+            profileAvatarImg.style.display = 'none';
+            profileAvatarLetter.style.display = 'flex';
+            applyAvatarToElement(profileAvatarLetter, profile);
+        }
+    } else if (profile.avatarUrl) {
         profileAvatarImg.src = profile.avatarUrl;
         profileAvatarImg.style.display = 'block';
         profileAvatarLetter.style.display = 'none';
@@ -1477,6 +1559,205 @@ profileSaveBtn?.addEventListener('click', async () => {
     }
 });
 
+/* === AVATAR CROP SYSTEM === */
+const avatarCropModal = document.getElementById('avatarCropModal');
+const avatarCropCanvas = document.getElementById('avatarCropCanvas');
+const avatarCropArea = document.getElementById('avatarCropArea');
+const avatarCropConfirmBtn = document.getElementById('avatarCropConfirmBtn');
+const avatarCropCancelBtn = document.getElementById('avatarCropCancelBtn');
+
+let cropState = {
+    img: null,
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    startOffsetX: 0,
+    startOffsetY: 0,
+    canvasSize: 280
+};
+
+function drawCropCanvas() {
+    if (!cropState.img) return;
+    const ctx = avatarCropCanvas.getContext('2d');
+    const size = cropState.canvasSize;
+    avatarCropCanvas.width = size;
+    avatarCropCanvas.height = size;
+    ctx.clearRect(0, 0, size, size);
+
+    const img = cropState.img;
+    const drawSize = Math.min(img.width, img.height) * cropState.scale;
+    const drawW = drawSize;
+    const drawH = drawSize;
+
+    ctx.drawImage(
+        img,
+        cropState.offsetX,
+        cropState.offsetY,
+        drawW,
+        drawH
+    );
+}
+
+function initCropWithImage(file) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        URL.revokeObjectURL(url);
+        cropState.img = img;
+        // Fit the image so the shorter side fills the canvas
+        const minDim = Math.min(img.width, img.height);
+        cropState.scale = cropState.canvasSize / minDim;
+        // Center
+        cropState.offsetX = (cropState.canvasSize - img.width * cropState.scale) / 2;
+        cropState.offsetY = (cropState.canvasSize - img.height * cropState.scale) / 2;
+        drawCropCanvas();
+        avatarCropModal.classList.add('active');
+    };
+    img.src = url;
+}
+
+function getCroppedBlob() {
+    return new Promise((resolve) => {
+        const outSize = 512; // output avatar resolution
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = outSize;
+        outCanvas.height = outSize;
+        const ctx = outCanvas.getContext('2d');
+
+        const img = cropState.img;
+        const drawSize = Math.min(img.width, img.height) * cropState.scale;
+        const drawW = drawSize;
+        const drawH = drawSize;
+
+        ctx.drawImage(
+            img,
+            cropState.offsetX,
+            cropState.offsetY,
+            drawW,
+            drawH
+        );
+
+        outCanvas.toBlob((blob) => {
+            resolve(blob);
+        }, 'image/jpeg', 0.9);
+    });
+}
+
+// Mouse/touch events for panning the crop area
+if (avatarCropArea) {
+    avatarCropArea.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        cropState.dragging = true;
+        cropState.startX = e.clientX;
+        cropState.startY = e.clientY;
+        cropState.startOffsetX = cropState.offsetX;
+        cropState.startOffsetY = cropState.offsetY;
+    });
+    window.addEventListener('mousemove', (e) => {
+        if (!cropState.dragging) return;
+        cropState.offsetX = cropState.startOffsetX + (e.clientX - cropState.startX);
+        cropState.offsetY = cropState.startOffsetY + (e.clientY - cropState.startY);
+        drawCropCanvas();
+    });
+    window.addEventListener('mouseup', () => {
+        cropState.dragging = false;
+    });
+
+    // Touch support
+    avatarCropArea.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        cropState.dragging = true;
+        cropState.startX = touch.clientX;
+        cropState.startY = touch.clientY;
+        cropState.startOffsetX = cropState.offsetX;
+        cropState.startOffsetY = cropState.offsetY;
+    }, { passive: false });
+    window.addEventListener('touchmove', (e) => {
+        if (!cropState.dragging) return;
+        const touch = e.touches[0];
+        cropState.offsetX = cropState.startOffsetX + (touch.clientX - cropState.startX);
+        cropState.offsetY = cropState.startOffsetY + (touch.clientY - cropState.startY);
+        drawCropCanvas();
+    });
+    window.addEventListener('touchend', () => {
+        cropState.dragging = false;
+    });
+
+    // Pinch-to-zoom
+    let lastPinchDist = 0;
+    avatarCropArea.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            lastPinchDist = Math.sqrt(dx * dx + dy * dy);
+        }
+    }, { passive: false });
+    avatarCropArea.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (lastPinchDist > 0) {
+                const delta = dist / lastPinchDist;
+                cropState.scale *= delta;
+                drawCropCanvas();
+            }
+            lastPinchDist = dist;
+        }
+    }, { passive: false });
+
+    // Scroll zoom
+    avatarCropArea.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+        cropState.scale *= zoomFactor;
+        drawCropCanvas();
+    }, { passive: false });
+}
+
+avatarCropCancelBtn?.addEventListener('click', () => {
+    avatarCropModal.classList.remove('active');
+    cropState.img = null;
+});
+
+avatarCropConfirmBtn?.addEventListener('click', async () => {
+    if (!cropState.img || !currentUser || profileModalUid !== currentUser.uid) return;
+    avatarCropConfirmBtn.disabled = true;
+    avatarCropConfirmBtn.textContent = 'Сохранение...';
+
+    try {
+        const blob = await getCroppedBlob();
+        avatarCropModal.classList.remove('active');
+
+        // Encrypt + upload to Supabase
+        const { path: avatarStoragePath, encKeyB64 } = await uploadEncryptedAvatar(blob, currentUser.uid);
+
+        // Update Firestore profile with storage path + key instead of public URL
+        await updateDoc(doc(db, 'users', currentUser.uid), {
+            avatarStoragePath,
+            encKeyB64,
+            avatarUrl: ''  // clear legacy URL
+        });
+
+        // Update local cache
+        currentUser = { ...currentUser, avatarStoragePath, encKeyB64, avatarUrl: '' };
+        userProfilesCache[currentUser.uid] = { ...currentUser };
+        openProfile(currentUser.uid);
+        showNotification('Аватар обновлён.', 'success');
+    } catch (error) {
+        console.error('Ошибка загрузки аватара:', error);
+        showNotification('Не удалось загрузить аватар.', 'error');
+    } finally {
+        avatarCropConfirmBtn.disabled = false;
+        avatarCropConfirmBtn.textContent = 'Сохранить';
+    }
+});
+
 profileAvatarInput?.addEventListener('change', async () => {
     const file = profileAvatarInput.files?.[0];
     profileAvatarInput.value = '';
@@ -1485,21 +1766,8 @@ profileAvatarInput?.addEventListener('change', async () => {
         showNotification('Можно загрузить только изображение.', 'error');
         return;
     }
-
-    try {
-        const path = `avatars/${currentUser.uid}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-        const storageRef = ref(storage, path);
-        await uploadBytes(storageRef, file);
-        const avatarUrl = await getDownloadURL(storageRef);
-        await updateDoc(doc(db, 'users', currentUser.uid), { avatarUrl });
-        currentUser = { ...currentUser, avatarUrl };
-        userProfilesCache[currentUser.uid] = { ...currentUser };
-        openProfile(currentUser.uid);
-        showNotification('Аватар обновлён.', 'success');
-    } catch (error) {
-        console.error('Ошибка загрузки аватара:', error);
-        showNotification('Не удалось загрузить аватар.', 'error');
-    }
+    // Open crop modal instead of uploading directly
+    initCropWithImage(file);
 });
 
 profileRemoveFriendBtn?.addEventListener('click', () => {
@@ -1630,6 +1898,8 @@ window.forceOpenChat = async (uid) => {
                 uid,
                 username: data.username,
                 avatarUrl: data.avatarUrl || '',
+                avatarStoragePath: data.avatarStoragePath || '',
+                encKeyB64: data.encKeyB64 || '',
                 bio: data.bio || ''
             });
         }
