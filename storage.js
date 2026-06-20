@@ -54,7 +54,7 @@ export async function uploadEncryptedChatImage(file, myUid, friendUid) {
     const arrayBuffer = await file.arrayBuffer();
     const packedBuffer = await CryptoManager.encryptAndPack(arrayBuffer, key);
 
-    const ext = file.name.split('.').pop().replace(/[^a-zA-Z0-9]/g, '') || 'bin';
+    const ext = (file.name || 'file.bin').split('.').pop().replace(/[^a-zA-Z0-9]/g, '') || 'bin';
     const path = `chat/${myUid}_${friendUid}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}.enc`;
 
     const { error } = await supabase.storage
@@ -102,7 +102,7 @@ export async function uploadEncryptedAvatar(file, uid) {
     const arrayBuffer = await file.arrayBuffer();
     const packedBuffer = await CryptoManager.encryptAndPack(arrayBuffer, key);
 
-    const ext = file.name.split('.').pop().replace(/[^a-zA-Z0-9]/g, '') || 'bin';
+    const ext = (file.name || 'file.bin').split('.').pop().replace(/[^a-zA-Z0-9]/g, '') || 'bin';
     const path = `avatars/${uid}/${Date.now()}.${ext}.enc`;
 
     const { error } = await supabase.storage

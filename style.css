@@ -1105,3 +1105,40 @@ body.auth-loading .app-container {
     border-radius: 25px;
     font-size: 15px;
 }
+
+/* === CALL EVENT MESSAGES (WhatsApp-style) === */
+.msg-call-event {
+    align-self: center !important;
+    max-width: 100% !important;
+    flex-direction: row !important;
+}
+.msg-call {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--glass-border);
+    backdrop-filter: blur(8px);
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.msg-call-icon {
+    font-size: 16px;
+}
+.msg-call-text {
+    font-weight: 500;
+    color: var(--text-main);
+}
+.msg-call-time {
+    font-size: 11px;
+    opacity: 0.6;
+}
+
+/* === DISABLED CALL CONTROLS === */
+.btn-control.disabled {
+    opacity: 0.3;
+    pointer-events: none;
+    cursor: not-allowed;
+}

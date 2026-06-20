@@ -1,10 +1,10 @@
 // sw.js
-const CACHE_NAME = 'libero-v108';
+const CACHE_NAME = 'libero-v112';
 const ASSETS = [
   './',
   './index.html',
-  './style.css?v=102',
-  './scripts.js?v=102',
+  './style.css?v=103',
+  './scripts.js?v=103',
   './firebase.js'
 ];
 
@@ -98,10 +98,11 @@ self.addEventListener('push', function(event) {
         });
       }
 
+      const tag = senderUid || 'general';
       return self.registration.showNotification(data.title || 'Новое сообщение', {
         body: data.body || 'Вам прислали сообщение',
         icon: 'https://cdn-icons-png.flaticon.com/512/1041/1041916.png',
-        tag: senderUid,
+        tag: tag,
         renotify: true,
         data: { senderUid }
       });

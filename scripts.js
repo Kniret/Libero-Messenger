@@ -1200,6 +1200,28 @@ function listenToMessages() {
         const date = new Date(msgTimestamp);
         const timeString = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
         const isMyMessage = msg.senderUid === currentUser.uid;
+
+        // Call event messages (WhatsApp-style)
+        if (msg.type === 'call') {
+            const divMsg = document.createElement('div');
+            divMsg.id = `msg-${msg.id}`;
+            divMsg.setAttribute('data-timestamp', msgTimestamp);
+            divMsg.className = 'message msg-call-event';
+            const callTypeIcon = msg.callType === 'video' ? '🎥' : '📞';
+            let callText = '';
+            if (msg.callStatus === 'missed') {
+                callText = `Пропущенный ${msg.callType === 'video' ? 'видеозвонок' : 'звонок'}`;
+            } else if (msg.callStatus === 'rejected') {
+                callText = `Отклонённый ${msg.callType === 'video' ? 'видеозвонок' : 'звонок'}`;
+            } else if (msg.callStatus === 'answered') {
+                callText = `${msg.callType === 'video' ? 'Видеозвонок' : 'Аудиозвонок'} · ${msg.callDuration || ''}`;
+            } else {
+                callText = `${msg.callType === 'video' ? 'Видеозвонок' : 'Аудиозвонок'}`;
+            }
+            divMsg.innerHTML = `<div class="msg-call"><span class="msg-call-icon">${callTypeIcon}</span><span class="msg-call-text">${callText}</span><span class="msg-call-time">${timeString}</span></div>`;
+            return divMsg;
+        }
+
         const divMsg = document.createElement('div');
         divMsg.id = `msg-${msg.id}`;
         divMsg.setAttribute('data-timestamp', msgTimestamp);
@@ -1834,6 +1856,7 @@ const pipMiniCall = document.getElementById('pipMiniCall');
 const pipMiniEnd = document.getElementById('pipMiniEnd');
 const btnToggleMic = document.getElementById('btnToggleMic');
 const btnToggleCamera = document.getElementById('btnToggleCamera');
+const btnScreenShare = document.getElementById('btnScreenShare');
 
 const ICE_SERVERS = {
     iceServers: [
@@ -1859,6 +1882,10 @@ let isInCall = false;
 let isMicOn = true;
 let isCameraOn = true;
 let incomingCallUnsubscribe = null;
+let isScreenSharing = false;
+let screenStream = null;
+let cameraTrack = null;
+let callEventSaved = false;
 
 callVoiceBtn.addEventListener('click', () => initiateCall('voice'));
 callVideoBtn.addEventListener('click', () => initiateCall('video'));
@@ -1878,19 +1905,125 @@ pipMiniCall.addEventListener('click', () => {
 });
 btnToggleMic.addEventListener('click', toggleMic);
 btnToggleCamera.addEventListener('click', toggleCamera);
+btnScreenShare?.addEventListener('click', toggleScreenShare);
 
 function toggleMic() {
     if (!localStream) return;
+    const audioTracks = localStream.getAudioTracks();
+    if (audioTracks.length === 0) return;
     isMicOn = !isMicOn;
-    localStream.getAudioTracks().forEach(t => t.enabled = isMicOn);
+    audioTracks.forEach(t => t.enabled = isMicOn);
     btnToggleMic.style.background = isMicOn ? 'rgba(255,255,255,0.2)' : 'var(--danger)';
+    const iconUse = btnToggleMic.querySelector('use');
+    if (iconUse) iconUse.setAttribute('href', isMicOn ? '#icon-mic' : '#icon-mic-off');
 }
 
 function toggleCamera() {
     if (!localStream || currentCallType !== 'video') return;
+    const videoTracks = localStream.getVideoTracks();
+    if (videoTracks.length === 0) return;
     isCameraOn = !isCameraOn;
-    localStream.getVideoTracks().forEach(t => t.enabled = isCameraOn);
+    videoTracks.forEach(t => t.enabled = isCameraOn);
     btnToggleCamera.style.background = isCameraOn ? 'rgba(255,255,255,0.2)' : 'var(--danger)';
+    const iconUse = btnToggleCamera.querySelector('use');
+    if (iconUse) iconUse.setAttribute('href', isCameraOn ? '#icon-video' : '#icon-video-off');
+}
+
+function updateDeviceButtons() {
+    if (!localStream) return;
+    const hasAudio = localStream.getAudioTracks().length > 0;
+    const hasVideo = localStream.getVideoTracks().length > 0;
+    if (!hasAudio) {
+        isMicOn = false;
+        btnToggleMic.classList.add('disabled');
+        btnToggleMic.style.background = 'rgba(255,255,255,0.1)';
+        const iconUse = btnToggleMic.querySelector('use');
+        if (iconUse) iconUse.setAttribute('href', '#icon-mic-off');
+    } else {
+        btnToggleMic.classList.remove('disabled');
+    }
+    if (!hasVideo) {
+        isCameraOn = false;
+        btnToggleCamera.classList.add('disabled');
+        btnToggleCamera.style.background = 'rgba(255,255,255,0.1)';
+        const iconUse = btnToggleCamera.querySelector('use');
+        if (iconUse) iconUse.setAttribute('href', '#icon-video-off');
+    } else {
+        btnToggleCamera.classList.remove('disabled');
+    }
+    // Hide screen share button for voice calls
+    if (currentCallType !== 'video' && btnScreenShare) {
+        btnScreenShare.style.display = 'none';
+    } else if (btnScreenShare) {
+        btnScreenShare.style.display = '';
+    }
+}
+
+async function toggleScreenShare() {
+    if (!peerConnection || !localStream) return;
+    if (isScreenSharing) {
+        // Stop screen share, revert to camera
+        if (screenStream) {
+            screenStream.getTracks().forEach(t => t.stop());
+            screenStream = null;
+        }
+        if (cameraTrack) {
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) await sender.replaceTrack(cameraTrack);
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo) localVideo.srcObject = localStream;
+        }
+        isScreenSharing = false;
+        btnScreenShare.style.background = 'rgba(255,255,255,0.2)';
+    } else {
+        try {
+            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+            const screenTrack = screenStream.getVideoTracks()[0];
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                cameraTrack = sender.track;
+                await sender.replaceTrack(screenTrack);
+            }
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo) localVideo.srcObject = screenStream;
+            isScreenSharing = true;
+            btnScreenShare.style.background = 'var(--primary)';
+            screenTrack.onended = () => {
+                if (isScreenSharing) toggleScreenShare();
+            };
+        } catch (e) {
+            console.error('Screen share error:', e);
+            showNotification('Не удалось начать демонстрацию экрана.', 'error');
+        }
+    }
+}
+
+async function saveCallEvent(status, duration) {
+    if (!currentUser || !currentChatFriend || callEventSaved) return;
+    callEventSaved = true;
+    try {
+        const durationStr = duration > 0 ? formatCallDuration(duration) : '';
+        await addDoc(collection(db, 'messages'), {
+            senderUid: currentUser.uid,
+            receiverUid: currentChatFriend.uid,
+            type: 'call',
+            callType: currentCallType || 'voice',
+            callStatus: status, // 'missed', 'outgoing', 'answered', 'rejected'
+            callDuration: durationStr,
+            text: '',
+            createdAt: Date.now(),
+            isRead: true
+        });
+    } catch (e) {
+        console.error('Failed to save call event:', e);
+    }
+}
+
+function formatCallDuration(ms) {
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
 }
 
 function startCallTimer() {
@@ -1921,28 +2054,40 @@ async function initiateCall(type) {
     if (!currentChatFriend || isInCall) return;
     currentCallType = type;
     isInCall = true;
+    callEventSaved = false;
 
-    // Get media stream
+    // Get media stream with camera fallback
     try {
         localStream = await navigator.mediaDevices.getUserMedia({
             audio: true,
             video: type === 'video'
         });
     } catch (e) {
-        console.error('Media access error:', e);
-        showNotification('Не удалось получить доступ к микрофону/камере.', 'error');
-        isInCall = false;
-        return;
+        console.warn('Full media failed, trying audio-only:', e);
+        if (type === 'video') {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                showNotification('Камера недоступна. Видеозвонок без камеры.', 'info');
+            } catch (e2) {
+                console.error('Audio access error:', e2);
+                showNotification('Не удалось получить доступ к микрофону.', 'error');
+                isInCall = false;
+                return;
+            }
+        } else {
+            showNotification('Не удалось получить доступ к микрофону.', 'error');
+            isInCall = false;
+            return;
+        }
     }
 
-    isMicOn = true;
-    isCameraOn = type === 'video';
+    isMicOn = localStream.getAudioTracks().length > 0;
+    isCameraOn = localStream.getVideoTracks().length > 0;
 
     // Create peer connection
     createPeerConnection();
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    // Create offer
+    updateDeviceButtons();
     try {
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
@@ -1985,14 +2130,16 @@ async function initiateCall(type) {
             try {
                 const answer = JSON.parse(data.answer);
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                // Connection should be establishing now
             } catch (e) {
                 console.error('Set remote desc error:', e);
             }
         } else if (data.status === 'rejected') {
             showNotification('Звонок отклонён.', 'info');
+            saveCallEvent('rejected', 0);
             cleanupCall();
         } else if (data.status === 'ended') {
+            const dur = callStartTime ? (Date.now() - callStartTime) : 0;
+            saveCallEvent(dur > 0 ? 'answered' : 'missed', dur);
             cleanupCall();
         }
     });
@@ -2026,7 +2173,11 @@ function createPeerConnection() {
             if (currentCallType === 'video') {
                 callModal.classList.remove('active');
                 const localVideo = document.getElementById('localVideo');
+                const hasLocalVideo = localStream && localStream.getVideoTracks().length > 0;
                 if (localVideo && localStream) localVideo.srcObject = localStream;
+                // Hide PiP if no local camera
+                const pipEl = document.querySelector('.vc-pip');
+                if (pipEl) pipEl.style.display = hasLocalVideo ? '' : 'none';
                 document.getElementById('vcCallName').textContent = currentChatFriend ? currentChatFriend.username : '';
                 document.getElementById('vcCallStatus').textContent = 'Подключено';
                 videoCallFS.classList.add('active');
@@ -2052,25 +2203,38 @@ function createPeerConnection() {
 async function acceptCall() {
     if (!currentCallId || !callDocRef) return;
 
-    // Get media stream
+    // Get media stream with camera fallback
     try {
         localStream = await navigator.mediaDevices.getUserMedia({
             audio: true,
             video: currentCallType === 'video'
         });
     } catch (e) {
-        console.error('Media access error:', e);
-        showNotification('Не удалось получить доступ к микрофону/камере.', 'error');
-        return;
+        console.warn('Full media failed, trying audio-only:', e);
+        if (currentCallType === 'video') {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                showNotification('Камера недоступна. Видеозвонок без камеры.', 'info');
+            } catch (e2) {
+                console.error('Audio access error:', e2);
+                showNotification('Не удалось получить доступ к микрофону.', 'error');
+                return;
+            }
+        } else {
+            showNotification('Не удалось получить доступ к микрофону.', 'error');
+            return;
+        }
     }
 
-    isMicOn = true;
-    isCameraOn = currentCallType === 'video';
+    isMicOn = localStream.getAudioTracks().length > 0;
+    isCameraOn = localStream.getVideoTracks().length > 0;
     isInCall = true;
+    callEventSaved = false;
 
     // Create peer connection
     createPeerConnection();
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    updateDeviceButtons();
 
     // Set remote description (the offer)
     const callSnap = await getDoc(callDocRef);
@@ -2092,7 +2256,10 @@ async function acceptCall() {
     callModal.classList.remove('active');
     if (currentCallType === 'video') {
         const localVideo = document.getElementById('localVideo');
+        const hasLocalVideo = localStream && localStream.getVideoTracks().length > 0;
         if (localVideo) localVideo.srcObject = localStream;
+        const pipEl = document.querySelector('.vc-pip');
+        if (pipEl) pipEl.style.display = hasLocalVideo ? '' : 'none';
         document.getElementById('vcCallName').textContent = callData.callerUsername;
         document.getElementById('vcCallStatus').textContent = 'Подключение...';
         videoCallFS.classList.add('active');
@@ -2146,14 +2313,18 @@ async function rejectCall() {
     if (callDocRef) {
         try { await updateDoc(callDocRef, { status: 'rejected' }); } catch (e) {}
     }
+    saveCallEvent('rejected', 0);
     callModal.classList.remove('active');
     cleanupCallResources();
 }
 
 async function endCall() {
+    const dur = callStartTime ? (Date.now() - callStartTime) : 0;
+    const status = dur > 0 ? 'answered' : 'missed';
     if (callDocRef) {
         try { await updateDoc(callDocRef, { status: 'ended' }); } catch (e) {}
     }
+    saveCallEvent(status, dur);
     cleanupCall();
 }
 
@@ -2166,6 +2337,16 @@ function cleanupCall() {
     currentCallId = null;
     currentCallType = '';
     callDocRef = null;
+    // Clean up screen share
+    if (screenStream) {
+        screenStream.getTracks().forEach(t => t.stop());
+        screenStream = null;
+    }
+    isScreenSharing = false;
+    cameraTrack = null;
+    // Restore PiP visibility for next call
+    const pipEl = document.querySelector('.vc-pip');
+    if (pipEl) pipEl.style.display = '';
     cleanupCallResources();
 }
 
@@ -2186,8 +2367,9 @@ function cleanupCallResources() {
     const localVideo = document.getElementById('localVideo');
     if (localVideo) localVideo.srcObject = null;
     // Reset button styles
-    if (btnToggleMic) btnToggleMic.style.background = 'rgba(255,255,255,0.2)';
-    if (btnToggleCamera) btnToggleCamera.style.background = 'rgba(255,255,255,0.2)';
+    if (btnToggleMic) { btnToggleMic.style.background = 'rgba(255,255,255,0.2)'; btnToggleMic.classList.remove('disabled'); const u = btnToggleMic.querySelector('use'); if (u) u.setAttribute('href', '#icon-mic'); }
+    if (btnToggleCamera) { btnToggleCamera.style.background = 'rgba(255,255,255,0.2)'; btnToggleCamera.classList.remove('disabled'); const u = btnToggleCamera.querySelector('use'); if (u) u.setAttribute('href', '#icon-video'); }
+    if (btnScreenShare) { btnScreenShare.style.background = 'rgba(255,255,255,0.2)'; btnScreenShare.style.display = ''; }
 }
 
 // Listen for incoming calls
@@ -2281,7 +2463,7 @@ async function startGlobalNotificationListener() {
                             reg.showNotification(msg.senderUsername || 'Новое сообщение', {
                                 body: msg.type === 'image' ? '\u{1F4F7} Фото' : msg.text || '',
                                 icon: 'https://cdn-icons-png.flaticon.com/512/1041/1041916.png',
-                                tag: senderUid,
+                                tag: senderUid || 'general',
                                 renotify: true,
                                 data: { senderUid }
                             });

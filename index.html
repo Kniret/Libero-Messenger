@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Libero Messenger</title>
-    <link rel="stylesheet" href="./style.css?v=102">
+    <link rel="stylesheet" href="./style.css?v=103">
     <link rel="manifest" href="./manifest.json">
     <meta name="theme-color" content="#6366f1">
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1041/1041916.png">
@@ -69,6 +69,9 @@
         <symbol id="icon-check-double" viewBox="0 0 24 24"><path d="M2 12l4 4L16 6 M8 12l4 4L22 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-x" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
         <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
+        <symbol id="icon-screen-share" viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm4 14h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M12 14v-4m0 0l-3 3m3-3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+        <symbol id="icon-mic-off" viewBox="0 0 24 24"><path d="M1 1l22 22M9 9v3a3 3 0 005.12 2.12M15 9.34V6a3 3 0 00-5.94-.6M19 10v2a7 7 0 01-.11 1.23M12 19v4m-4 0h8M5 10v2a7 7 0 0011.46 5.46" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+        <symbol id="icon-video-off" viewBox="0 0 24 24"><path d="M1 1l22 22M10.66 6H5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 001.66-.87M21 8.618v6.764a1 1 0 01-1.447.894L15 14M15 10l.66-.33" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
     </defs>
 </svg>
 
@@ -227,6 +230,7 @@
     <div class="vc-controls">
         <button class="call-btn btn-control" id="btnToggleMic" title="Микрофон"><svg style="width:24px;height:24px;"><use href="#icon-mic"></use></svg></button>
         <button class="call-btn btn-control" id="btnToggleCamera" title="Камера"><svg style="width:24px;height:24px;"><use href="#icon-video"></use></svg></button>
+        <button class="call-btn btn-control" id="btnScreenShare" title="Демонстрация экрана"><svg style="width:24px;height:24px;"><use href="#icon-screen-share"></use></svg></button>
         <button class="call-btn btn-reject" id="videoCallEndBtn"><svg style="width:24px;height:24px;"><use href="#icon-x"></use></svg></button>
     </div>
 </div>
@@ -294,7 +298,7 @@
     </div>
 </div>
 
-<script type="module" src="./scripts.js?v=102"></script>
+<script type="module" src="./scripts.js?v=103"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
