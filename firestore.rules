@@ -80,5 +80,44 @@ service cloud.firestore {
       allow update: if isSignedIn() && resource.data.receiverUid == request.auth.uid;
       allow delete: if false;
     }
+
+    // WebRTC Call signaling
+    match /calls/{callId} {
+      allow read: if isSignedIn() && (
+        resource.data.callerUid == request.auth.uid ||
+        resource.data.receiverUid == request.auth.uid
+      );
+      allow create: if isSignedIn()
+        && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.receiverUid is string
+        && request.resource.data.receiverUid != request.auth.uid
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.createdAt is number;
+      allow update: if isSignedIn() && (
+        resource.data.callerUid == request.auth.uid ||
+        resource.data.receiverUid == request.auth.uid
+      );
+      allow delete: if false;
+
+      // ICE candidates subcollections
+      match /callerCandidates/{candidateId} {
+        allow read: if isSignedIn() && (
+          parent().data.receiverUid == request.auth.uid
+        );
+        allow create: if isSignedIn() && (
+          parent().data.callerUid == request.auth.uid
+        );
+        allow delete: if false;
+      }
+      match /receiverCandidates/{candidateId} {
+        allow read: if isSignedIn() && (
+          parent().data.callerUid == request.auth.uid
+        );
+        allow create: if isSignedIn() && (
+          parent().data.receiverUid == request.auth.uid
+        );
+        allow delete: if false;
+      }
+    }
   }
 }

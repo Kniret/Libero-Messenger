@@ -201,7 +201,11 @@
         </div>
         <h2 style="margin-bottom: 10px; font-size: 24px;" id="callName">Пользователь</h2>
         <div style="color: var(--text-muted);" id="callStatus">Соединение...</div>
+        <div class="call-timer" id="callTimer" style="display:none;"></div>
         
+        <div class="call-actions" id="outgoingControls" style="display:none;">
+            <button class="call-btn btn-reject" id="callCancelBtn"><svg style="width:28px;height:28px;"><use href="#icon-x"></use></svg></button>
+        </div>
         <div class="call-actions" id="incomingControls">
             <button class="call-btn btn-reject" id="callRejectBtn"><svg style="width:28px;height:28px;"><use href="#icon-x"></use></svg></button>
             <button class="call-btn btn-accept" id="callAcceptBtn"><svg style="width:28px;height:28px;"><use href="#icon-call"></use></svg></button>
@@ -210,15 +214,33 @@
 </div>
 
 <div class="video-call-fs" id="videoCallFS">
-    <div class="vc-main">
-        <div class="vc-overlay"></div>
-        <div class="vc-pip">Я</div>
-        <div class="vc-controls">
-            <button class="call-btn btn-control"><svg style="width:24px;height:24px;"><use href="#icon-mic"></use></svg></button>
-            <button class="call-btn btn-control"><svg style="width:24px;height:24px;"><use href="#icon-video"></use></svg></button>
-            <button class="call-btn btn-reject" id="videoCallEndBtn"><svg style="width:24px;height:24px;"><use href="#icon-x"></use></svg></button>
-        </div>
+    <video id="remoteVideo" autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video>
+    <div class="vc-overlay"></div>
+    <div class="vc-pip">
+        <video id="localVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;border-radius:12px;"></video>
     </div>
+    <div class="vc-call-info">
+        <div id="vcCallName" style="font-size:18px;font-weight:600;color:#fff;"></div>
+        <div id="vcCallStatus" style="font-size:13px;color:rgba(255,255,255,0.7);margin-top:2px;"></div>
+        <div class="call-timer" id="vcCallTimer" style="display:none;color:#fff;"></div>
+    </div>
+    <div class="vc-controls">
+        <button class="call-btn btn-control" id="btnToggleMic" title="Микрофон"><svg style="width:24px;height:24px;"><use href="#icon-mic"></use></svg></button>
+        <button class="call-btn btn-control" id="btnToggleCamera" title="Камера"><svg style="width:24px;height:24px;"><use href="#icon-video"></use></svg></button>
+        <button class="call-btn btn-reject" id="videoCallEndBtn"><svg style="width:24px;height:24px;"><use href="#icon-x"></use></svg></button>
+    </div>
+</div>
+
+<!-- PiP Mini Call View -->
+<div class="pip-mini-call" id="pipMiniCall" style="display:none;">
+    <div class="pip-mini-avatar" id="pipMiniAvatar"></div>
+    <div class="pip-mini-info">
+        <div class="pip-mini-name" id="pipMiniName"></div>
+        <div class="pip-mini-timer" id="pipMiniTimer"></div>
+    </div>
+    <button class="pip-mini-end" id="pipMiniEnd" title="Завершить">
+        <svg style="width:18px;height:18px;"><use href="#icon-x"></use></svg>
+    </button>
 </div>
 
 <div class="profile-modal-overlay" id="profileModal">
