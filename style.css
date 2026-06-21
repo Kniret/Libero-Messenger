@@ -497,7 +497,7 @@ ul { list-style: none; }
     cursor: move;
     transition: transform 0.2s;
 }
-.vc-pip:hover { transform: scale(1.03); cursor: pointer; }
+.vc-pip:hover { transform: scale(1.03); }
 .vc-call-info {
     position: absolute;
     top: 30px;

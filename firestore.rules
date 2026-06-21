@@ -91,7 +91,9 @@ service cloud.firestore {
       );
     }
 
-    // WebRTC Call signaling (candidates stored in call document as arrays)
+    // WebRTC Call signaling
+    // ICE candidates are stored directly in the call document
+    // as arrays: callerCandidates and receiverCandidates
     match /calls/{callId} {
       allow read: if isSignedIn() && (
         resource.data.callerUid == request.auth.uid ||

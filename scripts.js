@@ -21,7 +21,8 @@ import {
     updateDoc,
     deleteField,
     limit,
-    writeBatch
+    writeBatch,
+    arrayUnion
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 import { supabase } from './supabase.js';
@@ -748,14 +749,21 @@ document.addEventListener('visibilitychange', () => {
         if (currentChatFriend) {
             clearNotificationsBySender(currentChatFriend.uid);
         }
-        // Hide PiP mini when returning to tab during call (full UI is still there)
+        // Restore call UI when page becomes visible again
         if (isInCall) {
             pipMiniCall.style.display = 'none';
+            if (currentCallType === 'video') {
+                videoCallFS.classList.add('active');
+            } else {
+                callModal.classList.add('active');
+            }
         }
     } else {
         setOnlineStatus(false);
-        // Show mini PiP when tab is hidden during call (but keep full UI in DOM)
+        // Show PiP mini view if in an active call and page is hidden
         if (isInCall) {
+            callModal.classList.remove('active');
+            videoCallFS.classList.remove('active');
             pipMiniCall.style.display = 'flex';
             const pipAvatar = document.getElementById('pipMiniAvatar');
             const pipName = document.getElementById('pipMiniName');
@@ -1929,7 +1937,6 @@ const pipMiniCall = document.getElementById('pipMiniCall');
 const pipMiniEnd = document.getElementById('pipMiniEnd');
 const btnToggleMic = document.getElementById('btnToggleMic');
 const btnToggleCamera = document.getElementById('btnToggleCamera');
-const btnScreenShare = document.getElementById('btnScreenShare');
 
 const ICE_SERVERS = {
     iceServers: [
@@ -1947,61 +1954,44 @@ let currentCallId = null;
 let currentCallType = ''; // 'voice' | 'video'
 let callDocRef = null;
 let callUnsubscribe = null;
-let localCallerCandidates = [];   // Local in-memory array (caller side)
-let localReceiverCandidates = []; // Local in-memory array (receiver side)
-let processedReceiverCandidates = 0;
-let processedCallerCandidates = 0;
 let callTimerInterval = null;
 let callStartTime = null;
 let isInCall = false;
 let isMicOn = true;
 let isCameraOn = true;
 let incomingCallUnsubscribe = null;
-let isScreenSharing = false;
-let screenStream = null;
-let cameraTrack = null;
 let callEventSaved = false;
 let isCallInitiator = false;
-let isPipSwapped = false;
-let ringSoundInterval = null;
 
-// === RING SOUND (Web Audio API) ===
-let audioCtx = null;
-function getAudioCtx() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    return audioCtx;
+// === RINGTONE (Web Audio API) ===
+let ringtoneCtx = null;
+let ringtoneInterval = null;
+
+function playRingtone() {
+    stopRingtone();
+    try {
+        ringtoneCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const playBeep = () => {
+            if (!ringtoneCtx) return;
+            const osc = ringtoneCtx.createOscillator();
+            const gain = ringtoneCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = 440;
+            gain.gain.value = 0.3;
+            osc.connect(gain);
+            gain.connect(ringtoneCtx.destination);
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, ringtoneCtx.currentTime + 1);
+            osc.stop(ringtoneCtx.currentTime + 1);
+        };
+        playBeep();
+        ringtoneInterval = setInterval(playBeep, 2000);
+    } catch (e) { console.warn('Ringtone error:', e); }
 }
 
-function playRingTone() {
-    const ctx = getAudioCtx();
-    const osc1 = ctx.createOscillator();
-    const osc2 = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc1.type = 'sine'; osc1.frequency.value = 440;
-    osc2.type = 'sine'; osc2.frequency.value = 480;
-    gain.gain.value = 0.15;
-    osc1.connect(gain); osc2.connect(gain);
-    gain.connect(ctx.destination);
-    osc1.start(); osc2.start();
-    // Ring pattern: 1s on, 2s off
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.setValueAtTime(0, ctx.currentTime + 1);
-    return { osc1, osc2, gain, stopAt: ctx.currentTime + 1 };
-}
-
-function startRingSound() {
-    stopRingSound();
-    let currentRing = playRingTone();
-    ringSoundInterval = setInterval(() => {
-        if (currentRing) {
-            try { currentRing.osc1.stop(); currentRing.osc2.stop(); } catch(e) {}
-        }
-        currentRing = playRingTone();
-    }, 3000);
-}
-
-function stopRingSound() {
-    if (ringSoundInterval) { clearInterval(ringSoundInterval); ringSoundInterval = null; }
+function stopRingtone() {
+    if (ringtoneInterval) { clearInterval(ringtoneInterval); ringtoneInterval = null; }
+    if (ringtoneCtx) { try { ringtoneCtx.close(); } catch(e) {} ringtoneCtx = null; }
 }
 
 callVoiceBtn.addEventListener('click', () => initiateCall('voice'));
@@ -2020,34 +2010,18 @@ pipMiniCall.addEventListener('click', () => {
         callModal.classList.add('active');
     }
 });
-
-// PiP swap: tap on local video (PiP) to swap local/remote video positions (not audio)
-document.querySelector('.vc-pip')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const pipContainer = document.querySelector('.vc-pip');
-    const videoCallFS = document.getElementById('videoCallFS');
-    const localVideo = document.getElementById('localVideo');
-    const remoteVideo = document.getElementById('remoteVideo');
-    if (!localVideo || !remoteVideo || !pipContainer) return;
-
-    if (!isPipSwapped) {
-        // Move remote video into PiP, local video to main view
-        remoteVideo.style.width = '100%'; remoteVideo.style.height = '100%'; remoteVideo.style.borderRadius = '12px';
-        localVideo.style.width = '100%'; localVideo.style.height = '100%'; localVideo.style.borderRadius = '';
-        pipContainer.appendChild(remoteVideo);
-        videoCallFS.insertBefore(localVideo, videoCallFS.firstChild);
-    } else {
-        // Restore: local in PiP, remote in main
-        localVideo.style.width = '100%'; localVideo.style.height = '100%'; localVideo.style.borderRadius = '12px';
-        remoteVideo.style.width = '100%'; remoteVideo.style.height = '100%'; remoteVideo.style.borderRadius = '';
-        pipContainer.appendChild(localVideo);
-        videoCallFS.insertBefore(remoteVideo, videoCallFS.firstChild);
-    }
-    isPipSwapped = !isPipSwapped;
-});
 btnToggleMic.addEventListener('click', toggleMic);
 btnToggleCamera.addEventListener('click', toggleCamera);
-btnScreenShare?.addEventListener('click', toggleScreenShare);
+
+// PiP swap: tap small video to swap with big video (WhatsApp-style)
+document.querySelector('.vc-pip')?.addEventListener('click', () => {
+    const localVid = document.getElementById('localVideo');
+    const remoteVid = document.getElementById('remoteVideo');
+    if (!localVid || !remoteVid) return;
+    const tmpSrc = localVid.srcObject;
+    localVid.srcObject = remoteVid.srcObject;
+    remoteVid.srcObject = tmpSrc;
+});
 
 function toggleMic() {
     if (!localStream) return;
@@ -2093,61 +2067,6 @@ function updateDeviceButtons() {
     } else {
         btnToggleCamera.classList.remove('disabled');
     }
-    // Hide screen share button for voice calls
-    if (currentCallType !== 'video' && btnScreenShare) {
-        btnScreenShare.style.display = 'none';
-    } else if (btnScreenShare) {
-        btnScreenShare.style.display = '';
-    }
-}
-
-async function toggleScreenShare() {
-    if (!peerConnection || !localStream) return;
-    if (isScreenSharing) {
-        // Stop screen share, revert to camera
-        if (screenStream) {
-            screenStream.getTracks().forEach(t => t.stop());
-            screenStream = null;
-        }
-        if (cameraTrack) {
-            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) await sender.replaceTrack(cameraTrack);
-            // Restore: local camera in PiP, remote in main
-            const localVideo = document.getElementById('localVideo');
-            const remoteVideo = document.getElementById('remoteVideo');
-            if (localVideo) localVideo.srcObject = localStream;
-            if (isPipSwapped) {
-                // If PiP was swapped, unswap
-                const tmp = localVideo.srcObject;
-                localVideo.srcObject = remoteVideo.srcObject;
-                remoteVideo.srcObject = tmp;
-                isPipSwapped = false;
-            }
-        }
-        isScreenSharing = false;
-        btnScreenShare.style.background = 'rgba(255,255,255,0.2)';
-    } else {
-        try {
-            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-            const screenTrack = screenStream.getVideoTracks()[0];
-            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) {
-                cameraTrack = sender.track;
-                await sender.replaceTrack(screenTrack);
-            }
-            // Show screen share in LOCAL preview (so user sees what they're sharing)
-            const localVideo = document.getElementById('localVideo');
-            if (localVideo) localVideo.srcObject = screenStream;
-            isScreenSharing = true;
-            btnScreenShare.style.background = 'var(--primary)';
-            screenTrack.onended = () => {
-                if (isScreenSharing) toggleScreenShare();
-            };
-        } catch (e) {
-            console.error('Screen share error:', e);
-            showNotification('Не удалось начать демонстрацию экрана.', 'error');
-        }
-    }
 }
 
 async function saveCallEvent(status, duration) {
@@ -2182,7 +2101,14 @@ function formatCallDuration(ms) {
 }
 
 function startCallTimer() {
+    // Clear any previous timer display
     callStartTime = Date.now();
+    const callTimerEl = document.getElementById('callTimer');
+    if (callTimerEl) { callTimerEl.textContent = '00:00'; callTimerEl.style.display = 'block'; }
+    const vcTimerEl = document.getElementById('vcCallTimer');
+    if (vcTimerEl) { vcTimerEl.textContent = '00:00'; vcTimerEl.style.display = 'block'; }
+    const pipTimerEl = document.getElementById('pipMiniTimer');
+    if (pipTimerEl) pipTimerEl.textContent = '00:00';
     const formatTime = (ms) => {
         const s = Math.floor(ms / 1000);
         const m = Math.floor(s / 60);
@@ -2192,17 +2118,22 @@ function startCallTimer() {
     callTimerInterval = setInterval(() => {
         const elapsed = Date.now() - callStartTime;
         const timeStr = formatTime(elapsed);
-        const callTimerEl = document.getElementById('callTimer');
-        if (callTimerEl) { callTimerEl.textContent = timeStr; callTimerEl.style.display = 'block'; }
-        const vcTimerEl = document.getElementById('vcCallTimer');
-        if (vcTimerEl) { vcTimerEl.textContent = timeStr; vcTimerEl.style.display = 'block'; }
-        const pipTimerEl = document.getElementById('pipMiniTimer');
+        if (callTimerEl) callTimerEl.textContent = timeStr;
+        if (vcTimerEl) vcTimerEl.textContent = timeStr;
         if (pipTimerEl) pipTimerEl.textContent = timeStr;
     }, 1000);
 }
 
 function stopCallTimer() {
     if (callTimerInterval) { clearInterval(callTimerInterval); callTimerInterval = null; }
+    callStartTime = null;
+    // Clear timer displays
+    const callTimerEl = document.getElementById('callTimer');
+    if (callTimerEl) { callTimerEl.textContent = ''; callTimerEl.style.display = 'none'; }
+    const vcTimerEl = document.getElementById('vcCallTimer');
+    if (vcTimerEl) { vcTimerEl.textContent = ''; vcTimerEl.style.display = 'none'; }
+    const pipTimerEl = document.getElementById('pipMiniTimer');
+    if (pipTimerEl) pipTimerEl.textContent = '';
 }
 
 async function initiateCall(type) {
@@ -2220,14 +2151,17 @@ async function initiateCall(type) {
         });
     } catch (e) {
         console.warn('Full media failed, trying audio-only:', e);
-        try {
-            // Fallback to audio-only for ANY failure (no camera, denied, etc.)
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            if (type === 'video') {
-                showNotification('Камера недоступна. Продолжаем аудиозвонок.', 'info');
+        if (type === 'video') {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                showNotification('Камера недоступна. Видеозвонок без камеры.', 'info');
+            } catch (e2) {
+                console.error('Audio access error:', e2);
+                showNotification('Не удалось получить доступ к микрофону.', 'error');
+                isInCall = false;
+                return;
             }
-        } catch (e2) {
-            console.error('Audio access error:', e2);
+        } else {
             showNotification('Не удалось получить доступ к микрофону.', 'error');
             isInCall = false;
             return;
@@ -2260,9 +2194,7 @@ async function initiateCall(type) {
         type,
         status: 'ringing',
         offer: JSON.stringify(peerConnection.localDescription),
-        createdAt: Date.now(),
-        callerCandidates: [],
-        receiverCandidates: []
+        createdAt: Date.now()
     });
 
     // Show outgoing call UI
@@ -2275,19 +2207,19 @@ async function initiateCall(type) {
     document.getElementById('outgoingControls').style.display = 'flex';
     document.getElementById('incomingControls').style.display = 'none';
     callModal.classList.add('active');
-    startRingSound();
 
-    // Listen for answer + receiver ICE candidates (all in one document)
-    processedReceiverCandidates = 0;
+    // Listen for answer and remote ICE candidates
+    let processedReceiverCandidates = 0;
     callUnsubscribe = onSnapshot(callDocRef, async (snap) => {
         const data = snap.data();
         if (!data) return;
 
-        // Process new receiver ICE candidates
-        if (data.receiverCandidates && peerConnection) {
+        // Process new receiver ICE candidates from the call document
+        if (data.receiverCandidates && peerConnection && peerConnection.remoteDescription) {
             while (processedReceiverCandidates < data.receiverCandidates.length) {
-                peerConnection.addIceCandidate(new RTCIceCandidate(data.receiverCandidates[processedReceiverCandidates]))
-                    .catch(err => console.warn('addIceCandidate error:', err));
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data.receiverCandidates[processedReceiverCandidates])));
+                } catch (e) { /* ignore duplicate */ }
                 processedReceiverCandidates++;
             }
         }
@@ -2299,8 +2231,9 @@ async function initiateCall(type) {
                 // Process any candidates that arrived before the answer
                 if (data.receiverCandidates) {
                     while (processedReceiverCandidates < data.receiverCandidates.length) {
-                        peerConnection.addIceCandidate(new RTCIceCandidate(data.receiverCandidates[processedReceiverCandidates]))
-                            .catch(err => console.warn('addIceCandidate error:', err));
+                        try {
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data.receiverCandidates[processedReceiverCandidates])));
+                        } catch (e) { /* ignore */ }
                         processedReceiverCandidates++;
                     }
                 }
@@ -2308,7 +2241,6 @@ async function initiateCall(type) {
                 console.error('Set remote desc error:', e);
             }
         } else if (data.status === 'rejected') {
-            stopRingSound();
             showNotification('Звонок отклонён.', 'info');
             try { await saveCallEvent('rejected', 0); } catch(e) { console.warn('Save call event error:', e); }
             cleanupCall();
@@ -2319,19 +2251,20 @@ async function initiateCall(type) {
         }
     }, (err) => console.warn('Call listener error:', err));
 
-    // Send caller ICE candidates (write full array from memory, no race condition)
-    localCallerCandidates = [];
+    // Send caller ICE candidates (stored as JSON strings in call document)
     peerConnection.onicecandidate = async (event) => {
         if (event.candidate && callDocRef) {
-            localCallerCandidates.push(event.candidate.toJSON());
             try {
-                await updateDoc(callDocRef, { callerCandidates: localCallerCandidates });
+                await updateDoc(callDocRef, { callerCandidates: arrayUnion(JSON.stringify(event.candidate.toJSON())) });
             } catch (e) { console.warn('ICE candidate send error:', e); }
         }
     };
 
     // Send push notification about the call
     await sendPushToUser(currentChatFriend.uid, `${type === 'video' ? 'Видеозвонок' : 'Аудиозвонок'} от ${currentUser.username}`, currentUser.uid);
+
+    // Play outgoing ringtone
+    playRingtone();
 }
 
 function createPeerConnection() {
@@ -2341,7 +2274,7 @@ function createPeerConnection() {
         const state = peerConnection.connectionState;
         if (state === 'connected') {
             // Call connected! Switch to active call UI
-            stopRingSound();
+            stopRingtone();
             document.getElementById('callStatus').textContent = 'Подключено';
             startCallTimer();
             // For outgoing calls, transition to proper UI
@@ -2377,7 +2310,7 @@ function createPeerConnection() {
 
 async function acceptCall() {
     if (!currentCallId || !callDocRef) return;
-    stopRingSound();
+    stopRingtone();
 
     // Get media stream with camera fallback
     try {
@@ -2387,15 +2320,17 @@ async function acceptCall() {
         });
     } catch (e) {
         console.warn('Full media failed, trying audio-only:', e);
-        try {
-            // Fallback to audio-only for ANY failure (no camera, denied, etc.)
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            showNotification('Камера недоступна. Продолжаем аудиозвонок.', 'info');
-        } catch (e2) {
-            console.error('Audio access error:', e2);
+        if (currentCallType === 'video') {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                showNotification('Камера недоступна. Видеозвонок без камеры.', 'info');
+            } catch (e2) {
+                console.error('Audio access error:', e2);
+                showNotification('Не удалось получить доступ к микрофону.', 'error');
+                return;
+            }
+        } else {
             showNotification('Не удалось получить доступ к микрофону.', 'error');
-            // Reject the call so the caller stops waiting
-            rejectCall();
             return;
         }
     }
@@ -2451,27 +2386,26 @@ async function acceptCall() {
         callModal.classList.add('active');
     }
 
-    // Send receiver ICE candidates (write full array from memory, no race condition)
-    localReceiverCandidates = [];
+    // Send receiver ICE candidates (stored as JSON strings in call document)
     peerConnection.onicecandidate = async (event) => {
         if (event.candidate && callDocRef) {
-            localReceiverCandidates.push(event.candidate.toJSON());
             try {
-                await updateDoc(callDocRef, { receiverCandidates: localReceiverCandidates });
+                await updateDoc(callDocRef, { receiverCandidates: arrayUnion(JSON.stringify(event.candidate.toJSON())) });
             } catch (e) { console.warn('ICE candidate send error:', e); }
         }
     };
 
-    // Listen for caller ICE candidates + call status (all in one document)
-    processedCallerCandidates = 0;
+    // Listen for caller ICE candidates via call document
+    let processedCallerCandidates = 0;
     callUnsubscribe = onSnapshot(callDocRef, async (snap) => {
         const data = snap.data();
         if (!data) return;
         // Process new caller ICE candidates
-        if (data.callerCandidates && peerConnection) {
+        if (data.callerCandidates && peerConnection && peerConnection.remoteDescription) {
             while (processedCallerCandidates < data.callerCandidates.length) {
-                peerConnection.addIceCandidate(new RTCIceCandidate(data.callerCandidates[processedCallerCandidates]))
-                    .catch(err => console.warn('addIceCandidate error:', err));
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data.callerCandidates[processedCallerCandidates])));
+                } catch (e) { /* ignore */ }
                 processedCallerCandidates++;
             }
         }
@@ -2482,11 +2416,11 @@ async function acceptCall() {
 }
 
 async function rejectCall() {
-    stopRingSound();
     if (callDocRef) {
         try { await updateDoc(callDocRef, { status: 'rejected' }); } catch (e) {}
     }
     saveCallEvent('rejected', 0);
+    stopRingtone();
     callModal.classList.remove('active');
     cleanupCallResources();
 }
@@ -2506,28 +2440,12 @@ function cleanupCall() {
     videoCallFS.classList.remove('active');
     pipMiniCall.style.display = 'none';
     stopCallTimer();
-    stopRingSound();
-    // Reset timer display
-    const callTimerEl = document.getElementById('callTimer');
-    if (callTimerEl) { callTimerEl.textContent = '00:00'; callTimerEl.style.display = 'none'; }
-    const vcTimerEl = document.getElementById('vcCallTimer');
-    if (vcTimerEl) { vcTimerEl.textContent = '00:00'; vcTimerEl.style.display = 'none'; }
-    const pipTimerEl = document.getElementById('pipMiniTimer');
-    if (pipTimerEl) pipTimerEl.textContent = '';
-    callStartTime = null;
+    stopRingtone();
     isInCall = false;
     currentCallId = null;
     currentCallType = '';
     callDocRef = null;
     isCallInitiator = false;
-    isPipSwapped = false;
-    // Clean up screen share
-    if (screenStream) {
-        screenStream.getTracks().forEach(t => t.stop());
-        screenStream = null;
-    }
-    isScreenSharing = false;
-    cameraTrack = null;
     // Restore PiP visibility for next call
     const pipEl = document.querySelector('.vc-pip');
     if (pipEl) pipEl.style.display = '';
@@ -2536,10 +2454,6 @@ function cleanupCall() {
 
 function cleanupCallResources() {
     if (callUnsubscribe) { callUnsubscribe(); callUnsubscribe = null; }
-    localCallerCandidates = [];
-    localReceiverCandidates = [];
-    processedReceiverCandidates = 0;
-    processedCallerCandidates = 0;
     if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
@@ -2555,7 +2469,6 @@ function cleanupCallResources() {
     // Reset button styles
     if (btnToggleMic) { btnToggleMic.style.background = 'rgba(255,255,255,0.2)'; btnToggleMic.classList.remove('disabled'); const u = btnToggleMic.querySelector('use'); if (u) u.setAttribute('href', '#icon-mic'); }
     if (btnToggleCamera) { btnToggleCamera.style.background = 'rgba(255,255,255,0.2)'; btnToggleCamera.classList.remove('disabled'); const u = btnToggleCamera.querySelector('use'); if (u) u.setAttribute('href', '#icon-video'); }
-    if (btnScreenShare) { btnScreenShare.style.background = 'rgba(255,255,255,0.2)'; btnScreenShare.style.display = ''; }
 }
 
 // Listen for incoming calls
@@ -2587,6 +2500,9 @@ function startIncomingCallListener() {
                 document.getElementById('outgoingControls').style.display = 'none';
                 document.getElementById('incomingControls').style.display = 'flex';
                 callModal.classList.add('active');
+
+                // Play incoming ringtone
+                playRingtone();
             }
         });
     }, (err) => console.warn('Incoming call listener error:', err));
