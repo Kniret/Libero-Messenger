@@ -1,21 +1,24 @@
 // sw.js
-const CACHE_NAME = 'libero-v123';
+const CACHE_NAME = 'libero-v125';
 const ASSETS = [
   './',
   './index.html',
-  './style.css?v=110',
-  './scripts.js?v=110',
+  './style.css?v=112',
+  './scripts.js?v=112',
   './firebase.js'
 ];
 
 let activeChatUid = null;
+
+// Force immediate activation (skip waiting phase)
+self.skipWaiting();
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[Service Worker] Кэширование ресурсов');
       return cache.addAll(ASSETS);
-    }).then(() => self.skipWaiting())
+    })
   );
 });
 
