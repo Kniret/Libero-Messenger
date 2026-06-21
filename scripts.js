@@ -1928,6 +1928,7 @@ let isScreenSharing = false;
 let screenStream = null;
 let cameraTrack = null;
 let callEventSaved = false;
+let isCallInitiator = false;
 
 callVoiceBtn.addEventListener('click', () => initiateCall('voice'));
 callVideoBtn.addEventListener('click', () => initiateCall('video'));
@@ -2042,6 +2043,8 @@ async function toggleScreenShare() {
 
 async function saveCallEvent(status, duration) {
     if (!currentUser || !currentChatFriend || callEventSaved) return;
+    // Only the caller (initiator) saves the call event to avoid duplication
+    if (!isCallInitiator) return;
     callEventSaved = true;
     try {
         const durationStr = duration > 0 ? formatCallDuration(duration) : '';
@@ -2097,6 +2100,7 @@ async function initiateCall(type) {
     currentCallType = type;
     isInCall = true;
     callEventSaved = false;
+    isCallInitiator = true;
 
     // Get media stream with camera fallback
     try {
@@ -2272,6 +2276,7 @@ async function acceptCall() {
     isCameraOn = localStream.getVideoTracks().length > 0;
     isInCall = true;
     callEventSaved = false;
+    isCallInitiator = false;
 
     // Create peer connection
     createPeerConnection();
@@ -2379,6 +2384,7 @@ function cleanupCall() {
     currentCallId = null;
     currentCallType = '';
     callDocRef = null;
+    isCallInitiator = false;
     // Clean up screen share
     if (screenStream) {
         screenStream.getTracks().forEach(t => t.stop());
