@@ -2234,7 +2234,7 @@ async function initiateCall(type) {
     };
 
     // Listen for receiver ICE candidates
-    listenForRemoteCandidates('receiverCandidates');
+    startCandidatePolling('receiverCandidates');
 
     // Send push notification about the call
     await sendPushToUser(currentChatFriend.uid, `${type === 'video' ? 'Видеозвонок' : 'Аудиозвонок'} от ${currentUser.username}`, currentUser.uid);
@@ -2367,27 +2367,39 @@ async function acceptCall() {
     };
 
     // Listen for caller ICE candidates
-    listenForRemoteCandidates('callerCandidates');
+    startCandidatePolling('callerCandidates');
 }
 
-function listenForRemoteCandidates(collectionName) {
+let candidatePollInterval = null;
+const processedCandidates = new Set();
+
+function startCandidatePolling(collectionName) {
     if (!currentCallId) return;
-    const candidatesQuery = query(collection(db, 'calls', currentCallId, collectionName));
-    const unsub = onSnapshot(candidatesQuery, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added' && peerConnection && peerConnection.remoteDescription) {
-                try {
-                    peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-                } catch (e) { console.warn('Add ICE candidate error:', e); }
-            }
-        });
-    }, (err) => console.warn('ICE candidates listener error:', err));
-    // Store for cleanup
-    if (collectionName === 'callerCandidates') {
-        callerCandidatesUnsub = unsub;
-    } else {
-        receiverCandidatesUnsub = unsub;
-    }
+    // Clear any existing polling
+    stopCandidatePolling();
+    processedCandidates.clear();
+
+    candidatePollInterval = setInterval(async () => {
+        if (!peerConnection || !peerConnection.remoteDescription || !currentCallId) return;
+        try {
+            const snap = await getDocs(collection(db, 'calls', currentCallId, collectionName));
+            snap.forEach((docSnap) => {
+                if (!processedCandidates.has(docSnap.id)) {
+                    processedCandidates.add(docSnap.id);
+                    try {
+                        peerConnection.addIceCandidate(new RTCIceCandidate(docSnap.data()));
+                    } catch (e) { /* ignore duplicate/invalid candidates */ }
+                }
+            });
+        } catch (e) {
+            // Permission or network error — just retry next interval
+        }
+    }, 500);
+}
+
+function stopCandidatePolling() {
+    if (candidatePollInterval) { clearInterval(candidatePollInterval); candidatePollInterval = null; }
+    processedCandidates.clear();
 }
 
 async function rejectCall() {
@@ -2434,8 +2446,9 @@ function cleanupCall() {
 
 function cleanupCallResources() {
     if (callUnsubscribe) { callUnsubscribe(); callUnsubscribe = null; }
-    if (callerCandidatesUnsub) { callerCandidatesUnsub(); callerCandidatesUnsub = null; }
-    if (receiverCandidatesUnsub) { receiverCandidatesUnsub(); receiverCandidatesUnsub = null; }
+    stopCandidatePolling();
+    callerCandidatesUnsub = null;
+    receiverCandidatesUnsub = null;
     if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
