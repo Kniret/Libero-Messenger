@@ -2234,7 +2234,7 @@ async function initiateCall(type) {
     };
 
     // Listen for receiver ICE candidates
-    startCandidatePolling('receiverCandidates');
+    listenForRemoteCandidates('receiverCandidates');
 
     // Send push notification about the call
     await sendPushToUser(currentChatFriend.uid, `${type === 'video' ? 'Видеозвонок' : 'Аудиозвонок'} от ${currentUser.username}`, currentUser.uid);
@@ -2367,20 +2367,50 @@ async function acceptCall() {
     };
 
     // Listen for caller ICE candidates
-    startCandidatePolling('callerCandidates');
+    listenForRemoteCandidates('callerCandidates');
 }
 
 let candidatePollInterval = null;
 const processedCandidates = new Set();
 
-function startCandidatePolling(collectionName) {
+function listenForRemoteCandidates(collectionName) {
     if (!currentCallId) return;
-    // Clear any existing polling
+    stopCandidatePolling();
+
+    // Try real-time listener first
+    const unsub = onSnapshot(
+        collection(db, 'calls', currentCallId, collectionName),
+        (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added' && peerConnection && peerConnection.remoteDescription) {
+                    try {
+                        peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+                    } catch (e) { /* ignore */ }
+                }
+            });
+        },
+        (err) => {
+            // Permission error — fall back to fast polling
+            console.warn('Candidate listener failed, switching to polling:', err.message);
+            startCandidatePolling(collectionName);
+        }
+    );
+
+    if (collectionName === 'callerCandidates') {
+        callerCandidatesUnsub = unsub;
+    } else {
+        receiverCandidatesUnsub = unsub;
+    }
+}
+
+function startCandidatePolling(collectionName) {
     stopCandidatePolling();
     processedCandidates.clear();
 
     candidatePollInterval = setInterval(async () => {
-        if (!peerConnection || !peerConnection.remoteDescription || !currentCallId) return;
+        if (!peerConnection || !currentCallId) return;
+        // Wait until remoteDescription is set before adding candidates
+        if (!peerConnection.remoteDescription) return;
         try {
             const snap = await getDocs(collection(db, 'calls', currentCallId, collectionName));
             snap.forEach((docSnap) => {
@@ -2388,13 +2418,11 @@ function startCandidatePolling(collectionName) {
                     processedCandidates.add(docSnap.id);
                     try {
                         peerConnection.addIceCandidate(new RTCIceCandidate(docSnap.data()));
-                    } catch (e) { /* ignore duplicate/invalid candidates */ }
+                    } catch (e) { /* ignore */ }
                 }
             });
-        } catch (e) {
-            // Permission or network error — just retry next interval
-        }
-    }, 500);
+        } catch (e) { /* retry next tick */ }
+    }, 200);
 }
 
 function stopCandidatePolling() {
@@ -2446,9 +2474,9 @@ function cleanupCall() {
 
 function cleanupCallResources() {
     if (callUnsubscribe) { callUnsubscribe(); callUnsubscribe = null; }
+    if (callerCandidatesUnsub) { callerCandidatesUnsub(); callerCandidatesUnsub = null; }
+    if (receiverCandidatesUnsub) { receiverCandidatesUnsub(); receiverCandidatesUnsub = null; }
     stopCandidatePolling();
-    callerCandidatesUnsub = null;
-    receiverCandidatesUnsub = null;
     if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
