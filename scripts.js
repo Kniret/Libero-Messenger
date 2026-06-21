@@ -2458,10 +2458,9 @@ function listenForRemoteCandidates(collectionName) {
         collection(db, 'calls', currentCallId, collectionName),
         (snapshot) => {
             snapshot.docChanges().forEach((change) => {
-                if (change.type === 'added' && peerConnection && peerConnection.remoteDescription) {
-                    try {
-                        peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-                    } catch (e) { /* ignore */ }
+                if (change.type === 'added' && peerConnection) {
+                    peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()))
+                        .catch(err => console.warn('addIceCandidate error:', err));
                 }
             });
         },
