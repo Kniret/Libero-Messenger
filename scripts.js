@@ -2218,17 +2218,14 @@ async function initiateCall(type) {
         });
     } catch (e) {
         console.warn('Full media failed, trying audio-only:', e);
-        if (type === 'video') {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                showNotification('Камера недоступна. Видеозвонок без камеры.', 'info');
-            } catch (e2) {
-                console.error('Audio access error:', e2);
-                showNotification('Не удалось получить доступ к микрофону.', 'error');
-                isInCall = false;
-                return;
+        try {
+            // Fallback to audio-only for ANY failure (no camera, denied, etc.)
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (type === 'video') {
+                showNotification('Камера недоступна. Продолжаем аудиозвонок.', 'info');
             }
-        } else {
+        } catch (e2) {
+            console.error('Audio access error:', e2);
             showNotification('Не удалось получить доступ к микрофону.', 'error');
             isInCall = false;
             return;
@@ -2369,17 +2366,15 @@ async function acceptCall() {
         });
     } catch (e) {
         console.warn('Full media failed, trying audio-only:', e);
-        if (currentCallType === 'video') {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                showNotification('Камера недоступна. Видеозвонок без камеры.', 'info');
-            } catch (e2) {
-                console.error('Audio access error:', e2);
-                showNotification('Не удалось получить доступ к микрофону.', 'error');
-                return;
-            }
-        } else {
+        try {
+            // Fallback to audio-only for ANY failure (no camera, denied, etc.)
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            showNotification('Камера недоступна. Продолжаем аудиозвонок.', 'info');
+        } catch (e2) {
+            console.error('Audio access error:', e2);
             showNotification('Не удалось получить доступ к микрофону.', 'error');
+            // Reject the call so the caller stops waiting
+            rejectCall();
             return;
         }
     }
