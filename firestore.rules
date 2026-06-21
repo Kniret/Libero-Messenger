@@ -111,19 +111,15 @@ service cloud.firestore {
 
       // ICE candidates subcollections
       match /callerCandidates/{candidateId} {
-        allow read: if isSignedIn() && (
+        allow read, create: if isSignedIn() && (
+          parent().data.callerUid == request.auth.uid ||
           parent().data.receiverUid == request.auth.uid
-        );
-        allow create: if isSignedIn() && (
-          parent().data.callerUid == request.auth.uid
         );
         allow delete: if false;
       }
       match /receiverCandidates/{candidateId} {
-        allow read: if isSignedIn() && (
-          parent().data.callerUid == request.auth.uid
-        );
-        allow create: if isSignedIn() && (
+        allow read, create: if isSignedIn() && (
+          parent().data.callerUid == request.auth.uid ||
           parent().data.receiverUid == request.auth.uid
         );
         allow delete: if false;

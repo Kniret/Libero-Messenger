@@ -1,5 +1,5 @@
 // scripts.js
-import { auth, db } from './firebase.js';
+import { auth, db, firebaseConfig } from './firebase.js';
 import { 
     signInWithEmailAndPassword, 
     createUserWithEmailAndPassword, 
@@ -713,6 +713,34 @@ async function setOnlineStatus(isOnline) {
     }
 }
 
+/**
+ * Reliably mark user as offline using navigator.sendBeacon + Firestore REST API.
+ * sendBeacon is guaranteed to complete even after page unload.
+ */
+function sendOfflineBeacon() {
+    if (!currentUser || !auth.currentUser) return;
+    const projectId = firebaseConfig.projectId;
+    const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/users/${currentUser.uid}?updateMask.fieldPaths=isOnline&updateMask.fieldPaths=lastActive`;
+    // Use cached token — getIdToken(false) won't trigger a network refresh
+    const tokenPromise = auth.currentUser.getIdToken(false);
+    // We can't await in beforeunload, so we fire-and-forget
+    tokenPromise.then(token => {
+        const body = JSON.stringify({
+            fields: {
+                isOnline: { booleanValue: false },
+                lastActive: { integerValue: Date.now() }
+            }
+        });
+        // Try fetch with keepalive first (more reliable than sendBeacon for auth headers)
+        fetch(url, {
+            method: 'PATCH',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: body,
+            keepalive: true
+        }).catch(() => {});
+    }).catch(() => {});
+}
+
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
         setOnlineStatus(true);
@@ -740,6 +768,11 @@ document.addEventListener('visibilitychange', () => {
             }
         }
     }
+});
+
+// Reliable offline status when page/tab is closed
+window.addEventListener('beforeunload', () => {
+    sendOfflineBeacon();
 });
 
 window.addEventListener('pagehide', () => {
